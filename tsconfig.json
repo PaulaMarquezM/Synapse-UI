@@ -9,6 +9,8 @@
     "./**/*.tsx"
   ],
   "compilerOptions": {
+    // Agrega esta línea para silenciar las advertencias sobre opciones futuras
+    "ignoreDeprecations": "6.0",
     "paths": {
       "~*": [
         "./src/*"

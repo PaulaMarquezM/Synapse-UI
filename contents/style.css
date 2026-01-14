@@ -1,0 +1,128 @@
+/* contents/style.css */
+
+/* --- Animación de Aura de Respiración (Breathe) --- */
+@keyframes breathe {
+  0% { box-shadow: inset 0px 0px 15px 5px rgba(76, 175, 80, 0.4); }
+  50% { box-shadow: inset 0px 0px 30px 15px rgba(76, 175, 80, 0.8); }
+  100% { box-shadow: inset 0px 0px 15px 5px rgba(76, 175, 80, 0.4); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* --- ESTADO FOCUSED (Minimalista, alta concentración) --- */
+.synapse-focused {
+  filter: grayscale(0.6) brightness(1.1) contrast(1.05);
+  transition: filter 0.8s ease-in-out;
+  animation: breathe 5s infinite ease-in-out;
+}
+
+/* Reducir opacidad de elementos secundarios en modo focus */
+.synapse-focused aside,
+.synapse-focused .sidebar,
+.synapse-focused .ads,
+.synapse-focused [class*="advertisement"] {
+  opacity: 0.3 !important;
+  transition: opacity 0.8s ease-in-out;
+}
+
+/* --- ESTADO STRESSED (Calmante, anti-sobrecarga) --- */
+.synapse-stressed {
+  filter: blur(1.5px) brightness(0.85) saturate(0.7) !important;
+  transition: filter 1s ease-in-out;
+}
+
+/* Reducir elementos distractores significativamente */
+.synapse-stressed img:not([alt*="logo"]):not([alt*="profile"]),
+.synapse-stressed video,
+.synapse-stressed iframe {
+  opacity: 0.2 !important;
+  filter: blur(3px) !important;
+  transition: all 1s ease-in-out;
+}
+
+/* Asegurar que elementos importantes estén visibles */
+.synapse-stressed > dialog,
+.synapse-stressed > .modal,
+.synapse-stressed [role="alertdialog"],
+.synapse-stressed [role="dialog"] {
+  filter: none !important;
+  opacity: 1 !important;
+}
+
+/* --- ESTADO FATIGUED (Alerta de cansancio) --- */
+.synapse-fatigued {
+  filter: brightness(1.2) saturate(1.3);
+  transition: filter 0.8s ease-in-out;
+  animation: pulse 3s infinite ease-in-out;
+}
+
+/* Aumentar contraste para ayudar a mantenerse alerta */
+.synapse-fatigued h1,
+.synapse-fatigued h2,
+.synapse-fatigued h3,
+.synapse-fatigued p {
+  text-shadow: 0 0 10px rgba(251, 191, 36, 0.3);
+}
+
+/* --- ESTADO NEUTRAL (Normal) --- */
+.synapse-neutral {
+  filter: none;
+  box-shadow: none;
+  animation: none;
+  transition: all 0.8s ease-in-out;
+}
+
+/* --- Efecto de entrada suave --- */
+body[class*="synapse-"] {
+  animation: fadeIn 0.5s ease-in-out;
+}
+
+/* --- Protección de elementos interactivos --- */
+.synapse-stressed button,
+.synapse-stressed input,
+.synapse-stressed select,
+.synapse-stressed textarea {
+  filter: none !important;
+  opacity: 1 !important;
+}
+
+/* --- Indicador visual sutil en la esquina --- */
+body[class*="synapse-"]::before {
+  content: '';
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  z-index: 9999;
+  pointer-events: none;
+  animation: pulse 2s infinite;
+}
+
+.synapse-focused::before {
+  background: #60a5fa;
+  box-shadow: 0 0 10px #60a5fa;
+}
+
+.synapse-stressed::before {
+  background: #4ade80;
+  box-shadow: 0 0 10px #4ade80;
+}
+
+.synapse-fatigued::before {
+  background: #fbbf24;
+  box-shadow: 0 0 10px #fbbf24;
+}
+
+.synapse-neutral::before {
+  display: none;
+}
