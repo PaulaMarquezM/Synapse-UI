@@ -76,10 +76,11 @@ const Dashboard: React.FC<DashboardProps> = ({ data, focusScore, stressLevel, al
               strokeDasharray={circumference}
               strokeDashoffset={strokeDashoffset}
               strokeLinecap="round"
-              initial={{ strokeDashoffset: circumference }}
+              initial={false}
               animate={{ strokeDashoffset }}
-              transition={{ duration: 0.8, ease: "easeOut" }}
+              transition={{ type: "tween", duration: 0.9, ease: "easeOut" }}
             />
+
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center">
             <Icon size={24} color={color} />

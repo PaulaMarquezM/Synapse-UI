@@ -17,6 +17,11 @@ body {
   min-height: 520px;
   background: #0b1220;
   overflow: hidden; /* clave */
+  margin: 0;
+  padding: 0;
+}
+* {
+  box-sizing: border-box;
 }
 #plasmo-shadow-container,
 #plasmo-shadow-host {
