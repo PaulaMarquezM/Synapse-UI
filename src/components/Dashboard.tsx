@@ -92,7 +92,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data, focusScore, stressLevel, al
   };
 
   return (
-    <div className="w-full max-w-md p-6 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white font-sans rounded-lg">
+    <div className="w-full max-w-[336px] p-6 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white font-sans rounded-lg">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">

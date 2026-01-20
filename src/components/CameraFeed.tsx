@@ -1,13 +1,7 @@
 // src/components/CameraFeed.tsx
-// (Ajusta la ruta si tu CameraFeed está en otro directorio)
 
-import React, { useRef, useEffect, useState } from "react"
+import React, { useEffect, useRef, useState } from "react"
 import type * as FaceApi from "face-api.js"
-
-// IMPORTANTE:
-// - Si NO usas alias "~", cambia esta línea por una ruta relativa correcta.
-//   Ejemplo (si CameraFeed.tsx está en src/components/):
-//   import { installModelFetchPatch } from "../lib/installModelFetchPatch"
 import { installModelFetchPatch } from "~lib/installModelFetchPatch"
 
 // Datos que se envían al Dashboard
@@ -27,6 +21,26 @@ interface CameraFeedProps {
   onDetection: (data: DetectionData) => void
 }
 
+const OFFSCREEN_VIDEO_STYLE: React.CSSProperties = {
+  position: "fixed",
+  left: "-10000px",
+  top: 0,
+  width: 640,
+  height: 480,
+  opacity: 0,
+  pointerEvents: "none"
+}
+
+const OFFSCREEN_CANVAS_STYLE: React.CSSProperties = {
+  position: "fixed",
+  left: "-10000px",
+  top: 0,
+  width: 640,
+  height: 480,
+  opacity: 0,
+  pointerEvents: "none"
+}
+
 const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -44,10 +58,15 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
   const blinkHistory = useRef<number[]>([])
   const lastEyeState = useRef<boolean>(true) // true = ojos abiertos
 
+  // Control de loop para evitar duplicados
+  const isDetectingRef = useRef(false)
+  const isMountedRef = useRef(true)
+
   /* ============================
      CARGA DE MODELOS + DEBUG
      ============================ */
   useEffect(() => {
+    isMountedRef.current = true
     let isActive = true
 
     const loadModels = async () => {
@@ -62,7 +81,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
         installModelFetchPatch()
         console.log("[SYNAPSE] GLOBAL fetch patch instalado ✅")
 
-        // 2) Import dinámico de face-api (importante para que tfjs inicialice con fetch ya parchado)
+        // 2) Import dinámico de face-api
         console.log("[SYNAPSE] Importando face-api.js dinámicamente...")
         const faceapi = await import("face-api.js")
         faceapiRef.current = faceapi
@@ -72,9 +91,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
         const BASE = chrome.runtime.getURL("assets/models/")
         console.log("[SYNAPSE] MODEL_BASE =", BASE)
 
-        /* --------------------------------------------------
-           VERIFICACIÓN DURA (SI ESTO FALLA, ES RUTA/BUILD)
-           -------------------------------------------------- */
+        // Verificación dura
         const requiredFiles = [
           "tiny_face_detector_model-weights_manifest.json",
           "tiny_face_detector_model-shard1",
@@ -93,9 +110,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
         }
         console.log("[SYNAPSE] Accesibilidad OK ✅")
 
-        /* --------------------------------------------------
-           CARGA REAL DE MODELOS
-           -------------------------------------------------- */
+        // Carga real de modelos
         console.log("[SYNAPSE] Iniciando face-api loadFromUri(BASE)...")
 
         await Promise.all([
@@ -142,6 +157,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
 
     return () => {
       isActive = false
+      isMountedRef.current = false
       console.log("[SYNAPSE] Cleanup loadModels")
     }
   }, [])
@@ -151,7 +167,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
      ============================ */
   useEffect(() => {
     if (modelsLoaded && !isInitialized) {
-      startVideo()
+      void startVideo()
     }
   }, [modelsLoaded, isInitialized])
 
@@ -166,11 +182,20 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
         }
       })
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        setIsInitialized(true)
-        console.log("[SYNAPSE] Cámara inicializada ✅")
+      if (!videoRef.current) return
+
+      videoRef.current.srcObject = stream
+
+      // Forzar reproducción para asegurar frames y dimensiones
+      try {
+        await videoRef.current.play()
+      } catch (e) {
+        // Si el navegador ya está reproduciendo, puede lanzar; no es fatal
+        console.warn("[SYNAPSE] play() warning:", e)
       }
+
+      setIsInitialized(true)
+      console.log("[SYNAPSE] Cámara inicializada ✅")
     } catch (err) {
       console.error("[SYNAPSE] Error al acceder a la cámara:", err)
     }
@@ -190,7 +215,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
 
     const eyeDistance = Math.abs(rightEyeCenter.x - leftEyeCenter.x)
     const noseOffset = noseTip.x - (leftEyeCenter.x + rightEyeCenter.x) / 2
-    const yaw = (noseOffset / eyeDistance) * 45
+    const yaw = (noseOffset / Math.max(1, eyeDistance)) * 45
 
     const eyeLevel = (leftEyeCenter.y + rightEyeCenter.y) / 2
     const nosePitch = (noseTip.y - eyeLevel) / 50
@@ -218,8 +243,8 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
     const leftEyeWidth = Math.abs(leftEye[3].x - leftEye[0].x)
     const rightEyeWidth = Math.abs(rightEye[3].x - rightEye[0].x)
 
-    const leftEAR = leftEyeHeight / leftEyeWidth
-    const rightEAR = rightEyeHeight / rightEyeWidth
+    const leftEAR = leftEyeHeight / Math.max(1e-6, leftEyeWidth)
+    const rightEAR = rightEyeHeight / Math.max(1e-6, rightEyeWidth)
     const avgEAR = (leftEAR + rightEAR) / 2
 
     return avgEAR < 0.15
@@ -236,6 +261,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
     const faceCenterX = box.x + box.width / 2
     const faceCenterY = box.y + box.height / 2
 
+    // Mapeo aproximado (como lo tenías), pero al menos con dimensiones reales
     const screenX = window.screen.width * (1 - faceCenterX / videoWidth)
     const screenY = window.screen.height * (faceCenterY / videoHeight)
 
@@ -256,48 +282,74 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
      LOOP PRINCIPAL DE DETECCIÓN
      ============================ */
   const handleVideoOnPlay = () => {
-    if (!videoRef.current || !canvasRef.current) return
+    if (isDetectingRef.current) return
+    if (!videoRef.current) return
+    if (!canvasRef.current) return
 
-    const detect = async () => {
+    const run = async () => {
+      isDetectingRef.current = true
+
       const faceapi = faceapiRef.current
-      if (!videoRef.current || !modelsLoaded || !faceapi) return
-
-      try {
-        const detections = await faceapi
-          .detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions())
-          .withFaceLandmarks()
-          .withFaceExpressions()
-
-        if (detections) {
-          const headPose = calculateHeadPose(detections.landmarks)
-
-          const isBlinking = detectBlink(detections.landmarks)
-          if (isBlinking && lastEyeState.current) {
-            blinkHistory.current.push(Date.now())
-          }
-          lastEyeState.current = !isBlinking
-
-          const blinkRate = updateBlinkRate()
-          const gaze = estimateGaze(detections)
-
-          const combinedData: DetectionData = {
-            expressions: detections.expressions,
-            gazeX: gaze.x,
-            gazeY: gaze.y,
-            headPose,
-            blinkRate
-          }
-
-          onDetection(combinedData)
-        }
-      } catch (error) {
-        console.error("[SYNAPSE] Error en detección:", error)
+      if (!faceapi) {
+        isDetectingRef.current = false
+        return
       }
 
-      setTimeout(detect, 150)
+      const tick = async () => {
+        if (!isMountedRef.current) return
+
+        // Asegurar que el video ya tenga dimensiones válidas
+        const vw = videoRef.current?.videoWidth || 0
+        const vh = videoRef.current?.videoHeight || 0
+        if (!vw || !vh) {
+          setTimeout(tick, 100)
+          return
+        }
+
+        if (!modelsLoaded || !videoRef.current) {
+          setTimeout(tick, 150)
+          return
+        }
+
+        try {
+          const detections = await faceapi
+            .detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions())
+            .withFaceLandmarks()
+            .withFaceExpressions()
+
+          if (detections) {
+            const headPose = calculateHeadPose(detections.landmarks)
+
+            const isBlinking = detectBlink(detections.landmarks)
+            if (isBlinking && lastEyeState.current) {
+              blinkHistory.current.push(Date.now())
+            }
+            lastEyeState.current = !isBlinking
+
+            const blinkRate = updateBlinkRate()
+            const gaze = estimateGaze(detections)
+
+            const combinedData: DetectionData = {
+              expressions: detections.expressions,
+              gazeX: gaze.x,
+              gazeY: gaze.y,
+              headPose,
+              blinkRate
+            }
+
+            onDetection(combinedData)
+          }
+        } catch (error) {
+          console.error("[SYNAPSE] Error en detección:", error)
+        }
+
+        setTimeout(tick, 150)
+      }
+
+      void tick()
     }
 
-    detect()
+    void run()
   }
 
   return (
@@ -305,12 +357,17 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
       <video
         ref={videoRef}
         onPlay={handleVideoOnPlay}
+        onLoadedMetadata={() => {
+          // Asegura reproducción cuando ya hay metadata
+          void videoRef.current?.play()
+        }}
         autoPlay
         muted
         playsInline
-        style={{ display: "none" }}
+        style={OFFSCREEN_VIDEO_STYLE}
       />
-      <canvas ref={canvasRef} style={{ display: "none" }} />
+
+      <canvas ref={canvasRef} style={OFFSCREEN_CANVAS_STYLE} />
 
       {!modelsLoaded && (
         <div

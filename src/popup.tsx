@@ -105,19 +105,41 @@ const Popup = () => {
   };
 
   return (
-    <div style={{ minHeight: '500px' }}>
-      {/* Feed de cámara oculto pero activo */}
-      <div style={{ display: 'none' }}>
+    <div
+      style={{
+        width: 360,
+        minHeight: 520,
+        background: "#0b1220",
+        padding: 12,
+        overflow: "hidden",
+        display: "flex",
+        justifyContent: "center"
+      }}
+    >
+      {/* Feed de cámara invisible pero activo */}
+      <div
+        style={{
+          position: "fixed",
+          left: "-10000px",
+          top: 0,
+          width: 640,
+          height: 480,
+          opacity: 0,
+          pointerEvents: "none"
+        }}
+      >
         <CameraFeed onDetection={handleDetection} />
       </div>
 
-      {/* Dashboard visible */}
-      <Dashboard 
-        data={data}
-        focusScore={focusScore}
-        stressLevel={stressLevel}
-        alertLevel={alertLevel}
-      />
+      {/* Scroll interno del contenido */}
+      <div style={{ width: "100%", overflowY: "auto", paddingRight: 6 }}>
+        <Dashboard
+          data={data}
+          focusScore={focusScore}
+          stressLevel={stressLevel}
+          alertLevel={alertLevel}
+        />
+      </div>
     </div>
   );
 };

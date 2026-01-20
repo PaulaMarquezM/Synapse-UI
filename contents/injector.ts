@@ -4,7 +4,7 @@ import cssText from "data-text:./style.css";
 import type { PlasmoCSConfig } from "plasmo";
 import { createRoot } from "react-dom/client";
 import React from "react";
-import Aura from "components/Aura";
+import Aura from "~components/Aura";
 
 export const config: PlasmoCSConfig = {
   matches: ["<all_urls>"],

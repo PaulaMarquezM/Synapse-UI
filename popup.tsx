@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import CameraFeed from './components/CameraFeed';
-import type { DetectionData } from './components/CameraFeed';
+import CameraFeed from './src/components/CameraFeed';
+import type { DetectionData } from './src/components/CameraFeed';
 const Popup = () => {
   const [data, setData] = useState<DetectionData | null>(null);
 
