@@ -33,11 +33,12 @@
   "manifest": {
   "permissions": ["camera"],
   "host_permissions": ["https://*/*"],
-  "web_accessible_resources": [
-  {
-    "resources": ["models/*", "models/**/*"],
-    "matches": ["<all_urls>"]
-  }
-]
+  "web_accessible_resources": [{
+  "resources": ["assets/models/*", "assets/models/**/*"],
+  "matches": ["<all_urls>"]
+}]
+
+
+
 }
 }

@@ -1,9 +1,18 @@
+// src/components/CameraFeed.tsx
+// (Ajusta la ruta si tu CameraFeed está en otro directorio)
+
 import React, { useRef, useEffect, useState } from "react"
-import * as faceapi from "face-api.js"
+import type * as FaceApi from "face-api.js"
+
+// IMPORTANTE:
+// - Si NO usas alias "~", cambia esta línea por una ruta relativa correcta.
+//   Ejemplo (si CameraFeed.tsx está en src/components/):
+//   import { installModelFetchPatch } from "../lib/installModelFetchPatch"
+import { installModelFetchPatch } from "~lib/installModelFetchPatch"
 
 // Datos que se envían al Dashboard
 export interface DetectionData {
-  expressions: faceapi.FaceExpressions
+  expressions: FaceApi.FaceExpressions
   gazeX: number
   gazeY: number
   headPose: {
@@ -22,6 +31,9 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
+  // Guardamos el módulo face-api.js aquí, porque ahora lo importamos dinámicamente
+  const faceapiRef = useRef<typeof import("face-api.js") | null>(null)
+
   const [modelsLoaded, setModelsLoaded] = useState(false)
   const [isInitialized, setIsInitialized] = useState(false)
 
@@ -33,27 +45,105 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
   const lastEyeState = useRef<boolean>(true) // true = ojos abiertos
 
   /* ============================
-     CARGA DE MODELOS (CORREGIDO)
+     CARGA DE MODELOS + DEBUG
      ============================ */
   useEffect(() => {
+    let isActive = true
+
     const loadModels = async () => {
       try {
-        const MODEL_URL = chrome.runtime.getURL("models")
+        console.log("========== [SYNAPSE] INICIO CARGA MODELOS ==========")
+        console.log("[SYNAPSE] UserAgent:", navigator.userAgent)
+        console.log("[SYNAPSE] Location:", window.location.href)
+        console.log("[SYNAPSE] Extension ID (host):", window.location.host)
+
+        // 1) Patch global del fetch ANTES de importar face-api
+        console.log("[SYNAPSE] Instalando GLOBAL fetch patch...")
+        installModelFetchPatch()
+        console.log("[SYNAPSE] GLOBAL fetch patch instalado ✅")
+
+        // 2) Import dinámico de face-api (importante para que tfjs inicialice con fetch ya parchado)
+        console.log("[SYNAPSE] Importando face-api.js dinámicamente...")
+        const faceapi = await import("face-api.js")
+        faceapiRef.current = faceapi
+        console.log("[SYNAPSE] face-api.js importado ✅")
+
+        // Base URL absoluta real del build
+        const BASE = chrome.runtime.getURL("assets/models/")
+        console.log("[SYNAPSE] MODEL_BASE =", BASE)
+
+        /* --------------------------------------------------
+           VERIFICACIÓN DURA (SI ESTO FALLA, ES RUTA/BUILD)
+           -------------------------------------------------- */
+        const requiredFiles = [
+          "tiny_face_detector_model-weights_manifest.json",
+          "tiny_face_detector_model-shard1",
+          "face_expression_model-weights_manifest.json",
+          "face_expression_model-shard1",
+          "face_landmark_68_model-weights_manifest.json",
+          "face_landmark_68_model-shard1"
+        ]
+
+        console.log("[SYNAPSE] Verificando accesibilidad de archivos...")
+        for (const file of requiredFiles) {
+          const url = `${BASE}${file}`
+          const r = await fetch(url, { cache: "no-store" })
+          console.log("[SYNAPSE] CHECK FILE:", r.status, r.ok, url)
+          if (!r.ok) throw new Error(`Archivo no accesible: ${url}`)
+        }
+        console.log("[SYNAPSE] Accesibilidad OK ✅")
+
+        /* --------------------------------------------------
+           CARGA REAL DE MODELOS
+           -------------------------------------------------- */
+        console.log("[SYNAPSE] Iniciando face-api loadFromUri(BASE)...")
 
         await Promise.all([
-          faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-          faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL),
-          faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL)
+          faceapi.nets.tinyFaceDetector.loadFromUri(BASE),
+          faceapi.nets.faceExpressionNet.loadFromUri(BASE),
+          faceapi.nets.faceLandmark68Net.loadFromUri(BASE)
         ])
 
-        console.log("[SYNAPSE] Modelos de IA cargados correctamente")
+        if (!isActive) return
+
+        console.log("✅ [SYNAPSE] MODELOS DE IA CARGADOS CORRECTAMENTE")
         setModelsLoaded(true)
       } catch (error) {
-        console.error("[SYNAPSE] Error al cargar modelos:", error)
+        console.error("❌ [SYNAPSE] ERROR CARGANDO MODELOS:", error)
+
+        // Dump extra por si el error es intermitente
+        try {
+          const BASE = chrome.runtime.getURL("assets/models/")
+          const urls = [
+            `${BASE}tiny_face_detector_model-weights_manifest.json`,
+            `${BASE}tiny_face_detector_model-shard1`,
+            `${BASE}face_expression_model-weights_manifest.json`,
+            `${BASE}face_expression_model-shard1`,
+            `${BASE}face_landmark_68_model-weights_manifest.json`,
+            `${BASE}face_landmark_68_model-shard1`
+          ]
+
+          console.log("[SYNAPSE] Dump de accesibilidad de archivos...")
+          for (const u of urls) {
+            try {
+              const r = await fetch(u, { cache: "no-store" })
+              console.log("  ", r.status, r.ok, u)
+            } catch (e) {
+              console.error("  FAIL", u, e)
+            }
+          }
+        } catch {
+          // ignore
+        }
       }
     }
 
     loadModels()
+
+    return () => {
+      isActive = false
+      console.log("[SYNAPSE] Cleanup loadModels")
+    }
   }, [])
 
   /* ============================
@@ -67,6 +157,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
 
   const startVideo = async () => {
     try {
+      console.log("[SYNAPSE] Solicitando cámara...")
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: 640,
@@ -78,7 +169,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
       if (videoRef.current) {
         videoRef.current.srcObject = stream
         setIsInitialized(true)
-        console.log("[SYNAPSE] Cámara inicializada")
+        console.log("[SYNAPSE] Cámara inicializada ✅")
       }
     } catch (err) {
       console.error("[SYNAPSE] Error al acceder a la cámara:", err)
@@ -88,7 +179,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
   /* ============================
      CÁLCULO DE ORIENTACIÓN
      ============================ */
-  const calculateHeadPose = (landmarks: faceapi.FaceLandmarks68) => {
+  const calculateHeadPose = (landmarks: FaceApi.FaceLandmarks68) => {
     const nose = landmarks.getNose()
     const leftEye = landmarks.getLeftEye()
     const rightEye = landmarks.getRightEye()
@@ -98,8 +189,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
     const rightEyeCenter = rightEye[3]
 
     const eyeDistance = Math.abs(rightEyeCenter.x - leftEyeCenter.x)
-    const noseOffset =
-      noseTip.x - (leftEyeCenter.x + rightEyeCenter.x) / 2
+    const noseOffset = noseTip.x - (leftEyeCenter.x + rightEyeCenter.x) / 2
     const yaw = (noseOffset / eyeDistance) * 45
 
     const eyeLevel = (leftEyeCenter.y + rightEyeCenter.y) / 2
@@ -118,7 +208,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
   /* ============================
      DETECCIÓN DE PARPADEO
      ============================ */
-  const detectBlink = (landmarks: faceapi.FaceLandmarks68): boolean => {
+  const detectBlink = (landmarks: FaceApi.FaceLandmarks68): boolean => {
     const leftEye = landmarks.getLeftEye()
     const rightEye = landmarks.getRightEye()
 
@@ -138,7 +228,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
   /* ============================
      ESTIMACIÓN DE MIRADA
      ============================ */
-  const estimateGaze = (detection: faceapi.WithFaceLandmarks<any>) => {
+  const estimateGaze = (detection: FaceApi.WithFaceLandmarks<any>) => {
     const box = detection.detection.box
     const videoWidth = videoRef.current?.videoWidth || 640
     const videoHeight = videoRef.current?.videoHeight || 480
@@ -146,10 +236,8 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
     const faceCenterX = box.x + box.width / 2
     const faceCenterY = box.y + box.height / 2
 
-    const screenX =
-      window.screen.width * (1 - faceCenterX / videoWidth)
-    const screenY =
-      window.screen.height * (faceCenterY / videoHeight)
+    const screenX = window.screen.width * (1 - faceCenterX / videoWidth)
+    const screenY = window.screen.height * (faceCenterY / videoHeight)
 
     setGazeData({ x: screenX, y: screenY })
     return { x: screenX, y: screenY }
@@ -160,9 +248,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
      ============================ */
   const updateBlinkRate = () => {
     const now = Date.now()
-    blinkHistory.current = blinkHistory.current.filter(
-      (time) => now - time < 60000
-    )
+    blinkHistory.current = blinkHistory.current.filter((time) => now - time < 60000)
     return blinkHistory.current.length
   }
 
@@ -173,14 +259,12 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
     if (!videoRef.current || !canvasRef.current) return
 
     const detect = async () => {
-      if (!videoRef.current || !modelsLoaded) return
+      const faceapi = faceapiRef.current
+      if (!videoRef.current || !modelsLoaded || !faceapi) return
 
       try {
         const detections = await faceapi
-          .detectSingleFace(
-            videoRef.current,
-            new faceapi.TinyFaceDetectorOptions()
-          )
+          .detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions())
           .withFaceLandmarks()
           .withFaceExpressions()
 
