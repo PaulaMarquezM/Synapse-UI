@@ -31,8 +31,13 @@
     "typescript": "5.3.3"
   },
   "manifest": {
-    "host_permissions": [
-      "https://*/*"
-    ]
+  "permissions": ["camera"],
+  "host_permissions": ["https://*/*"],
+  "web_accessible_resources": [
+  {
+    "resources": ["models/*", "models/**/*"],
+    "matches": ["<all_urls>"]
   }
+]
+}
 }

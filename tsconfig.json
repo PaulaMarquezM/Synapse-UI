@@ -1,7 +1,9 @@
 {
   "extends": "plasmo/templates/tsconfig.base",
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "build",
+    ".plasmo"
   ],
   "include": [
     ".plasmo/index.d.ts",
@@ -9,13 +11,13 @@
     "./**/*.tsx"
   ],
   "compilerOptions": {
-    // Agrega esta línea para silenciar las advertencias sobre opciones futuras
     "ignoreDeprecations": "6.0",
+    "jsx": "react-jsx",
+    "lib": ["dom", "es2021"],
+    "moduleResolution": "bundler",
+    "baseUrl": ".",
     "paths": {
-      "~*": [
-        "./src/*"
-      ]
-    },
-    "baseUrl": "."
+      "~*": ["./src/*"]
+    }
   }
 }
