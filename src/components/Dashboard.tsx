@@ -162,10 +162,11 @@ const Dashboard: React.FC<DashboardProps> = ({ data, focusScore, stressLevel, al
                 <div className="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
                   <motion.div
                     className="h-full bg-gradient-to-r from-blue-500 to-purple-500"
-                    initial={{ width: 0 }}
+                    initial={false}
                     animate={{ width: `${value * 100}%` }}
-                    transition={{ duration: 0.5 }}
+                    transition={{ type: "tween", duration: 0.6, ease: "easeOut" }}
                   />
+
                 </div>
                 <span className="text-xs text-gray-400 w-12 text-right">
                   {(value * 100).toFixed(0)}%
