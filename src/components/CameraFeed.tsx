@@ -1,5 +1,4 @@
 // src/components/CameraFeed.tsx
-
 import React, { useEffect, useRef, useState } from "react"
 import type * as FaceApi from "face-api.js"
 import { installModelFetchPatch } from "~lib/installModelFetchPatch"
@@ -19,51 +18,38 @@ export interface DetectionData {
 
 interface CameraFeedProps {
   onDetection: (data: DetectionData) => void
+
+  // NUEVO: preview para IHC (ver cámara + overlay)
+  preview?: boolean
+  previewWidth?: number
+  previewHeight?: number
 }
 
-const OFFSCREEN_VIDEO_STYLE: React.CSSProperties = {
-  position: "fixed",
-  left: "-10000px",
-  top: 0,
-  width: 640,
-  height: 480,
-  opacity: 0,
-  pointerEvents: "none"
-}
-
-const OFFSCREEN_CANVAS_STYLE: React.CSSProperties = {
-  position: "fixed",
-  left: "-10000px",
-  top: 0,
-  width: 640,
-  height: 480,
-  opacity: 0,
-  pointerEvents: "none"
-}
-
-const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
+const CameraFeed: React.FC<CameraFeedProps> = ({
+  onDetection,
+  preview = false,
+  previewWidth = 260,
+  previewHeight = 195
+}) => {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
-  // Guardamos el módulo face-api.js aquí, porque ahora lo importamos dinámicamente
+  // Módulo face-api
   const faceapiRef = useRef<typeof import("face-api.js") | null>(null)
 
   const [modelsLoaded, setModelsLoaded] = useState(false)
   const [isInitialized, setIsInitialized] = useState(false)
 
-  // Seguimiento de mirada
-  const [gazeData, setGazeData] = useState({ x: 0, y: 0 })
-
   // Parpadeo
   const blinkHistory = useRef<number[]>([])
-  const lastEyeState = useRef<boolean>(true) // true = ojos abiertos
+  const lastEyeState = useRef<boolean>(true)
 
-  // Control de loop para evitar duplicados
+  // Control loop
   const isDetectingRef = useRef(false)
   const isMountedRef = useRef(true)
 
   /* ============================
-     CARGA DE MODELOS + DEBUG
+     CARGA DE MODELOS
      ============================ */
   useEffect(() => {
     isMountedRef.current = true
@@ -76,22 +62,18 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
         console.log("[SYNAPSE] Location:", window.location.href)
         console.log("[SYNAPSE] Extension ID (host):", window.location.host)
 
-        // 1) Patch global del fetch ANTES de importar face-api
         console.log("[SYNAPSE] Instalando GLOBAL fetch patch...")
         installModelFetchPatch()
         console.log("[SYNAPSE] GLOBAL fetch patch instalado ✅")
 
-        // 2) Import dinámico de face-api
         console.log("[SYNAPSE] Importando face-api.js dinámicamente...")
         const faceapi = await import("face-api.js")
         faceapiRef.current = faceapi
         console.log("[SYNAPSE] face-api.js importado ✅")
 
-        // Base URL absoluta real del build
         const BASE = chrome.runtime.getURL("assets/models/")
         console.log("[SYNAPSE] MODEL_BASE =", BASE)
 
-        // Verificación dura
         const requiredFiles = [
           "tiny_face_detector_model-weights_manifest.json",
           "tiny_face_detector_model-shard1",
@@ -110,9 +92,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
         }
         console.log("[SYNAPSE] Accesibilidad OK ✅")
 
-        // Carga real de modelos
         console.log("[SYNAPSE] Iniciando face-api loadFromUri(BASE)...")
-
         await Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri(BASE),
           faceapi.nets.faceExpressionNet.loadFromUri(BASE),
@@ -120,40 +100,14 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
         ])
 
         if (!isActive) return
-
         console.log("✅ [SYNAPSE] MODELOS DE IA CARGADOS CORRECTAMENTE")
         setModelsLoaded(true)
       } catch (error) {
         console.error("❌ [SYNAPSE] ERROR CARGANDO MODELOS:", error)
-
-        // Dump extra por si el error es intermitente
-        try {
-          const BASE = chrome.runtime.getURL("assets/models/")
-          const urls = [
-            `${BASE}tiny_face_detector_model-weights_manifest.json`,
-            `${BASE}tiny_face_detector_model-shard1`,
-            `${BASE}face_expression_model-weights_manifest.json`,
-            `${BASE}face_expression_model-shard1`,
-            `${BASE}face_landmark_68_model-weights_manifest.json`,
-            `${BASE}face_landmark_68_model-shard1`
-          ]
-
-          console.log("[SYNAPSE] Dump de accesibilidad de archivos...")
-          for (const u of urls) {
-            try {
-              const r = await fetch(u, { cache: "no-store" })
-              console.log("  ", r.status, r.ok, u)
-            } catch (e) {
-              console.error("  FAIL", u, e)
-            }
-          }
-        } catch {
-          // ignore
-        }
       }
     }
 
-    loadModels()
+    void loadModels()
 
     return () => {
       isActive = false
@@ -183,14 +137,11 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
       })
 
       if (!videoRef.current) return
-
       videoRef.current.srcObject = stream
 
-      // Forzar reproducción para asegurar frames y dimensiones
       try {
         await videoRef.current.play()
       } catch (e) {
-        // Si el navegador ya está reproduciendo, puede lanzar; no es fatal
         console.warn("[SYNAPSE] play() warning:", e)
       }
 
@@ -251,7 +202,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
   }
 
   /* ============================
-     ESTIMACIÓN DE MIRADA
+     ESTIMACIÓN DE MIRADA (proxy)
      ============================ */
   const estimateGaze = (detection: FaceApi.WithFaceLandmarks<any>) => {
     const box = detection.detection.box
@@ -261,11 +212,9 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
     const faceCenterX = box.x + box.width / 2
     const faceCenterY = box.y + box.height / 2
 
-    // Mapeo aproximado (como lo tenías), pero al menos con dimensiones reales
     const screenX = window.screen.width * (1 - faceCenterX / videoWidth)
     const screenY = window.screen.height * (faceCenterY / videoHeight)
 
-    setGazeData({ x: screenX, y: screenY })
     return { x: screenX, y: screenY }
   }
 
@@ -279,6 +228,49 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
   }
 
   /* ============================
+     DIBUJO OVERLAY (box + landmarks)
+     ============================ */
+  const drawOverlay = (detections: FaceApi.WithFaceLandmarks<any> & FaceApi.WithFaceExpressions<any>) => {
+    const canvas = canvasRef.current
+    const video = videoRef.current
+    if (!canvas || !video) return
+
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return
+
+    // Ajustar canvas a tamaño real del video (para dibujar coordenadas correctas)
+    const vw = video.videoWidth || 640
+    const vh = video.videoHeight || 480
+    if (canvas.width !== vw) canvas.width = vw
+    if (canvas.height !== vh) canvas.height = vh
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+    // box
+    const b = detections.detection.box
+    ctx.strokeStyle = "rgba(96,165,250,0.95)"
+    ctx.lineWidth = 3
+    ctx.strokeRect(b.x, b.y, b.width, b.height)
+
+    // landmarks (puntos)
+    const pts = detections.landmarks.positions
+    ctx.fillStyle = "rgba(139,92,246,0.95)"
+    for (const p of pts) {
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, 2, 0, Math.PI * 2)
+      ctx.fill()
+    }
+
+    // texto pequeño: emoción dominante (opcional)
+    const exprAny = detections.expressions as any
+    const emotion = Object.keys(exprAny).reduce((a, k) => (exprAny[k] > exprAny[a] ? k : a), "neutral")
+
+    ctx.fillStyle = "rgba(255,255,255,0.9)"
+    ctx.font = "16px Inter, system-ui, sans-serif"
+    ctx.fillText(`face: ok | ${emotion}`, Math.max(10, b.x), Math.max(20, b.y - 8))
+  }
+
+  /* ============================
      LOOP PRINCIPAL DE DETECCIÓN
      ============================ */
   const handleVideoOnPlay = () => {
@@ -286,88 +278,149 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
     if (!videoRef.current) return
     if (!canvasRef.current) return
 
-    const run = async () => {
-      isDetectingRef.current = true
+    const faceapi = faceapiRef.current
+    if (!faceapi) return
 
-      const faceapi = faceapiRef.current
-      if (!faceapi) {
-        isDetectingRef.current = false
+    isDetectingRef.current = true
+
+    const tick = async () => {
+      if (!isMountedRef.current) return
+
+      const video = videoRef.current
+      if (!video) return
+
+      const vw = video.videoWidth || 0
+      const vh = video.videoHeight || 0
+      if (!vw || !vh) {
+        setTimeout(tick, 100)
         return
       }
 
-      const tick = async () => {
-        if (!isMountedRef.current) return
-
-        // Asegurar que el video ya tenga dimensiones válidas
-        const vw = videoRef.current?.videoWidth || 0
-        const vh = videoRef.current?.videoHeight || 0
-        if (!vw || !vh) {
-          setTimeout(tick, 100)
-          return
-        }
-
-        if (!modelsLoaded || !videoRef.current) {
-          setTimeout(tick, 150)
-          return
-        }
-
-        try {
-          const detections = await faceapi
-            .detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions())
-            .withFaceLandmarks()
-            .withFaceExpressions()
-
-          if (detections) {
-            const headPose = calculateHeadPose(detections.landmarks)
-
-            const isBlinking = detectBlink(detections.landmarks)
-            if (isBlinking && lastEyeState.current) {
-              blinkHistory.current.push(Date.now())
-            }
-            lastEyeState.current = !isBlinking
-
-            const blinkRate = updateBlinkRate()
-            const gaze = estimateGaze(detections)
-
-            const combinedData: DetectionData = {
-              expressions: detections.expressions,
-              gazeX: gaze.x,
-              gazeY: gaze.y,
-              headPose,
-              blinkRate
-            }
-
-            onDetection(combinedData)
-          }
-        } catch (error) {
-          console.error("[SYNAPSE] Error en detección:", error)
-        }
-
+      if (!modelsLoaded) {
         setTimeout(tick, 150)
+        return
       }
 
-      void tick()
+      try {
+        const detections = await faceapi
+          .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+          .withFaceLandmarks()
+          .withFaceExpressions()
+
+        if (detections) {
+          // overlay visual (si preview)
+          if (preview) drawOverlay(detections)
+
+          const headPose = calculateHeadPose(detections.landmarks)
+
+          const isBlinking = detectBlink(detections.landmarks)
+          if (isBlinking && lastEyeState.current) blinkHistory.current.push(Date.now())
+          lastEyeState.current = !isBlinking
+
+          const blinkRate = updateBlinkRate()
+          const gaze = estimateGaze(detections)
+
+          const combinedData: DetectionData = {
+            expressions: detections.expressions,
+            gazeX: gaze.x,
+            gazeY: gaze.y,
+            headPose,
+            blinkRate
+          }
+
+          onDetection(combinedData)
+        } else {
+          // si no hay detección, limpiamos overlay para que sea obvio
+          if (preview && canvasRef.current) {
+            const ctx = canvasRef.current.getContext("2d")
+            if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+          }
+        }
+      } catch (error) {
+        console.error("[SYNAPSE] Error en detección:", error)
+      }
+
+      // Menos carga que 150ms. Si quieres más fluido, baja a 150 luego.
+      setTimeout(tick, 200)
     }
 
-    void run()
+    void tick()
+  }
+
+  // UI preview (si preview=true)
+  const previewContainerStyle: React.CSSProperties = {
+    width: previewWidth,
+    height: previewHeight,
+    borderRadius: 14,
+    overflow: "hidden",
+    position: "relative",
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.04)"
+  }
+
+  const previewVideoStyle: React.CSSProperties = {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+    transform: "scaleX(-1)" // espejo típico selfie
+  }
+
+  const previewCanvasStyle: React.CSSProperties = {
+    position: "absolute",
+    inset: 0,
+    width: "100%",
+    height: "100%",
+    pointerEvents: "none"
+  }
+
+  // Modo oculto (cuando preview=false): mantenemos video/canvas fuera de pantalla
+  const offscreenStyle: React.CSSProperties = {
+    position: "fixed",
+    left: "-10000px",
+    top: 0,
+    width: 640,
+    height: 480,
+    opacity: 0,
+    pointerEvents: "none"
   }
 
   return (
     <div style={{ position: "relative" }}>
-      <video
-        ref={videoRef}
-        onPlay={handleVideoOnPlay}
-        onLoadedMetadata={() => {
-          // Asegura reproducción cuando ya hay metadata
-          void videoRef.current?.play()
-        }}
-        autoPlay
-        muted
-        playsInline
-        style={OFFSCREEN_VIDEO_STYLE}
-      />
+      {/* PREVIEW visible (IHC) */}
+      {preview && (
+        <div style={previewContainerStyle}>
+          <video
+            ref={videoRef}
+            onPlay={handleVideoOnPlay}
+            onLoadedMetadata={() => {
+              void videoRef.current?.play()
+            }}
+            autoPlay
+            muted
+            playsInline
+            style={previewVideoStyle}
+          />
+          <canvas ref={canvasRef} style={previewCanvasStyle} />
+        </div>
+      )}
 
-      <canvas ref={canvasRef} style={OFFSCREEN_CANVAS_STYLE} />
+      {/* MODO OCULTO (si preview=false) */}
+      {!preview && (
+        <>
+          <video
+            ref={videoRef}
+            onPlay={handleVideoOnPlay}
+            onLoadedMetadata={() => {
+              void videoRef.current?.play()
+            }}
+            autoPlay
+            muted
+            playsInline
+            style={offscreenStyle}
+          />
+          <canvas ref={canvasRef} style={offscreenStyle} />
+        </>
+      )}
 
       {!modelsLoaded && (
         <div
@@ -376,7 +429,8 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
             padding: "10px",
             background: "rgba(251, 191, 36, 0.1)",
             borderRadius: "8px",
-            fontSize: "12px"
+            fontSize: "12px",
+            marginTop: 10
           }}
         >
           ⏳ Cargando modelos de IA...
@@ -390,7 +444,8 @@ const CameraFeed: React.FC<CameraFeedProps> = ({ onDetection }) => {
             padding: "10px",
             background: "rgba(96, 165, 250, 0.1)",
             borderRadius: "8px",
-            fontSize: "12px"
+            fontSize: "12px",
+            marginTop: 10
           }}
         >
           📹 Inicializando cámara...
