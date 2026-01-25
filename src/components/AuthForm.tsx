@@ -121,10 +121,19 @@ const AuthForm: React.FC<AuthFormProps> = ({ onAuthSuccess }) => {
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: 12,
+            background: 'rgba(239, 68, 68, 0.1)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            borderRadius: 10,
+            marginBottom: 16
+          }}
         >
-          <AlertCircle size={18} className="text-red-400" />
-          <p className="text-sm text-red-400">{errorMessage}</p>
+          <AlertCircle size={18} style={{ color: '#f87171' }} />
+          <p style={{ fontSize: 13, color: '#f87171', margin: 0 }}>{errorMessage}</p>
         </motion.div>
       );
     }
@@ -134,10 +143,19 @@ const AuthForm: React.FC<AuthFormProps> = ({ onAuthSuccess }) => {
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex items-center gap-2 p-3 bg-green-500/10 border border-green-500/30 rounded-lg"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: 12,
+            background: 'rgba(34, 197, 94, 0.1)',
+            border: '1px solid rgba(34, 197, 94, 0.3)',
+            borderRadius: 10,
+            marginBottom: 16
+          }}
         >
-          <CheckCircle size={18} className="text-green-400" />
-          <p className="text-sm text-green-400">
+          <CheckCircle size={18} style={{ color: '#4ade80' }} />
+          <p style={{ fontSize: 13, color: '#4ade80', margin: 0 }}>
             {mode === 'login' ? '¡Bienvenido de vuelta!' : '¡Cuenta creada exitosamente!'}
           </p>
         </motion.div>
@@ -152,24 +170,40 @@ const AuthForm: React.FC<AuthFormProps> = ({ onAuthSuccess }) => {
   // ============================================
 
   return (
-    <div className="w-full max-w-md p-8 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 rounded-2xl shadow-2xl">
+    <div className="w-full max-w-[380px] mx-auto" style={{ padding: '0 16px' }}>
       {/* Header */}
-      <div className="text-center mb-8">
+      <div className="text-center mb-6">
         <motion.div
           initial={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
-          className="inline-flex items-center justify-center w-16 h-16 mb-4 
-                     bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl shadow-lg"
+          style={{
+            width: 56,
+            height: 56,
+            margin: '0 auto 16px',
+            borderRadius: 14,
+            background: 'linear-gradient(135deg, #60a5fa, #8b5cf6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 8px 20px rgba(96, 165, 250, 0.3)'
+          }}
         >
-          <Brain size={32} className="text-white" />
+          <Brain size={30} style={{ color: 'white' }} />
         </motion.div>
         
-        <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 
-                       bg-clip-text text-transparent mb-2">
+        <h1 style={{
+          fontSize: 28,
+          fontWeight: 800,
+          background: 'linear-gradient(135deg, #60a5fa, #8b5cf6)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          backgroundClip: 'text',
+          marginBottom: 8
+        }}>
           SYNAPSE UI
         </h1>
         
-        <p className="text-gray-400 text-sm">
+        <p style={{ color: '#94a3b8', fontSize: 13 }}>
           {mode === 'login' 
             ? 'Inicia sesión para continuar' 
             : 'Crea tu cuenta para comenzar'}
@@ -182,50 +216,112 @@ const AuthForm: React.FC<AuthFormProps> = ({ onAuthSuccess }) => {
       </AnimatePresence>
 
       {/* Form */}
-      <form onSubmit={handleSubmit} className="space-y-4 mt-6">
+      <form onSubmit={handleSubmit} style={{ marginTop: 20 }}>
         {/* Email */}
-        <div className="relative">
-          <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
-            <Mail size={20} />
+        <div style={{ position: 'relative', marginBottom: 14 }}>
+          <div style={{
+            position: 'absolute',
+            left: 14,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            color: '#94a3b8'
+          }}>
+            <Mail size={18} />
           </div>
           <input
             type="email"
             placeholder="Correo electrónico"
             value={email}
             onChange={handleEmailChange}
-            className="w-full pl-12 pr-4 py-3 bg-white/5 border border-white/10 rounded-lg 
-                       text-white placeholder-gray-500 outline-none 
-                       focus:border-blue-500/50 focus:bg-white/10 
-                       transition-all duration-200"
+            style={{
+              width: '100%',
+              paddingLeft: 44,
+              paddingRight: 14,
+              paddingTop: 12,
+              paddingBottom: 12,
+              background: 'rgba(255, 255, 255, 0.05)',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              borderRadius: 10,
+              color: 'white',
+              fontSize: 14,
+              outline: 'none',
+              transition: 'all 0.2s'
+            }}
             disabled={status === 'loading'}
             autoComplete="email"
+            onFocus={(e) => {
+              e.target.style.borderColor = 'rgba(96, 165, 250, 0.5)'
+              e.target.style.background = 'rgba(255, 255, 255, 0.08)'
+            }}
+            onBlur={(e) => {
+              e.target.style.borderColor = 'rgba(255, 255, 255, 0.1)'
+              e.target.style.background = 'rgba(255, 255, 255, 0.05)'
+            }}
           />
         </div>
 
         {/* Password */}
-        <div className="relative">
-          <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
-            <Lock size={20} />
+        <div style={{ position: 'relative', marginBottom: 14 }}>
+          <div style={{
+            position: 'absolute',
+            left: 14,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            color: '#94a3b8'
+          }}>
+            <Lock size={18} />
           </div>
           <input
             type={showPassword ? 'text' : 'password'}
             placeholder="Contraseña"
             value={password}
             onChange={handlePasswordChange}
-            className="w-full pl-12 pr-12 py-3 bg-white/5 border border-white/10 rounded-lg 
-                       text-white placeholder-gray-500 outline-none 
-                       focus:border-blue-500/50 focus:bg-white/10 
-                       transition-all duration-200"
+            style={{
+              width: '100%',
+              paddingLeft: 44,
+              paddingRight: 44,
+              paddingTop: 12,
+              paddingBottom: 12,
+              background: 'rgba(255, 255, 255, 0.05)',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              borderRadius: 10,
+              color: 'white',
+              fontSize: 14,
+              outline: 'none',
+              transition: 'all 0.2s'
+            }}
             disabled={status === 'loading'}
             autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+            onFocus={(e) => {
+              e.target.style.borderColor = 'rgba(96, 165, 250, 0.5)'
+              e.target.style.background = 'rgba(255, 255, 255, 0.08)'
+            }}
+            onBlur={(e) => {
+              e.target.style.borderColor = 'rgba(255, 255, 255, 0.1)'
+              e.target.style.background = 'rgba(255, 255, 255, 0.05)'
+            }}
           />
           <button
             type="button"
             onClick={toggleShowPassword}
-            className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition-colors"
+            style={{
+              position: 'absolute',
+              right: 14,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              color: '#94a3b8',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: 4,
+              display: 'flex',
+              transition: 'color 0.2s'
+            }}
             tabIndex={-1}
+            onMouseEnter={(e) => e.currentTarget.style.color = 'white'}
+            onMouseLeave={(e) => e.currentTarget.style.color = '#94a3b8'}
           >
-            {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+            {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
           </button>
         </div>
 
@@ -236,22 +332,46 @@ const AuthForm: React.FC<AuthFormProps> = ({ onAuthSuccess }) => {
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
               exit={{ opacity: 0, height: 0 }}
-              className="relative"
+              style={{ position: 'relative', marginBottom: 14 }}
             >
-              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
-                <Lock size={20} />
+              <div style={{
+                position: 'absolute',
+                left: 14,
+                top: '50%',
+                transform: 'translateY(-50%)',
+                color: '#94a3b8'
+              }}>
+                <Lock size={18} />
               </div>
               <input
                 type={showPassword ? 'text' : 'password'}
                 placeholder="Confirmar contraseña"
                 value={confirmPassword}
                 onChange={handleConfirmPasswordChange}
-                className="w-full pl-12 pr-4 py-3 bg-white/5 border border-white/10 rounded-lg 
-                           text-white placeholder-gray-500 outline-none 
-                           focus:border-blue-500/50 focus:bg-white/10 
-                           transition-all duration-200"
+                style={{
+                  width: '100%',
+                  paddingLeft: 44,
+                  paddingRight: 14,
+                  paddingTop: 12,
+                  paddingBottom: 12,
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  borderRadius: 10,
+                  color: 'white',
+                  fontSize: 14,
+                  outline: 'none',
+                  transition: 'all 0.2s'
+                }}
                 disabled={status === 'loading'}
                 autoComplete="new-password"
+                onFocus={(e) => {
+                  e.target.style.borderColor = 'rgba(96, 165, 250, 0.5)'
+                  e.target.style.background = 'rgba(255, 255, 255, 0.08)'
+                }}
+                onBlur={(e) => {
+                  e.target.style.borderColor = 'rgba(255, 255, 255, 0.1)'
+                  e.target.style.background = 'rgba(255, 255, 255, 0.05)'
+                }}
               />
             </motion.div>
           )}
@@ -262,13 +382,13 @@ const AuthForm: React.FC<AuthFormProps> = ({ onAuthSuccess }) => {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="text-xs text-gray-500 space-y-1"
+            style={{ fontSize: 11, color: '#6b7280', marginBottom: 14 }}
           >
-            <p className={password.length >= 6 ? 'text-green-400' : ''}>
+            <p style={{ color: password.length >= 6 ? '#4ade80' : '#6b7280', marginBottom: 4 }}>
               • Mínimo 6 caracteres
             </p>
             {confirmPassword && (
-              <p className={password === confirmPassword ? 'text-green-400' : 'text-red-400'}>
+              <p style={{ color: password === confirmPassword ? '#4ade80' : '#f87171' }}>
                 • Las contraseñas {password === confirmPassword ? 'coinciden' : 'no coinciden'}
               </p>
             )}
@@ -281,20 +401,43 @@ const AuthForm: React.FC<AuthFormProps> = ({ onAuthSuccess }) => {
           disabled={!canSubmit() || status === 'loading'}
           whileHover={{ scale: canSubmit() ? 1.02 : 1 }}
           whileTap={{ scale: canSubmit() ? 0.98 : 1 }}
-          className={`w-full py-3 rounded-lg font-semibold transition-all duration-200 
-                     ${canSubmit() && status !== 'loading'
-                       ? 'bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white shadow-lg' 
-                       : 'bg-gray-700 text-gray-500 cursor-not-allowed'}`}
+          style={{
+            width: '100%',
+            padding: '13px 20px',
+            borderRadius: 10,
+            fontWeight: 600,
+            fontSize: 14,
+            border: 'none',
+            cursor: canSubmit() && status !== 'loading' ? 'pointer' : 'not-allowed',
+            background: canSubmit() && status !== 'loading'
+              ? 'linear-gradient(135deg, #60a5fa, #8b5cf6)'
+              : '#374151',
+            color: canSubmit() && status !== 'loading' ? 'white' : '#6b7280',
+            boxShadow: canSubmit() && status !== 'loading' 
+              ? '0 4px 12px rgba(96, 165, 250, 0.3)' 
+              : 'none',
+            transition: 'all 0.2s',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8
+          }}
         >
           {status === 'loading' ? (
-            <span className="flex items-center justify-center gap-2">
+            <>
               <motion.div
                 animate={{ rotate: 360 }}
                 transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-                className="w-5 h-5 border-2 border-white border-t-transparent rounded-full"
+                style={{
+                  width: 18,
+                  height: 18,
+                  border: '2px solid white',
+                  borderTopColor: 'transparent',
+                  borderRadius: '50%'
+                }}
               />
               Procesando...
-            </span>
+            </>
           ) : (
             mode === 'login' ? 'Iniciar Sesión' : 'Crear Cuenta'
           )}
@@ -302,8 +445,8 @@ const AuthForm: React.FC<AuthFormProps> = ({ onAuthSuccess }) => {
       </form>
 
       {/* Toggle Mode */}
-      <div className="mt-6 text-center">
-        <p className="text-gray-400 text-sm">
+      <div style={{ marginTop: 20, textAlign: 'center' }}>
+        <p style={{ color: '#94a3b8', fontSize: 13 }}>
           {mode === 'login' 
             ? '¿No tienes cuenta?' 
             : '¿Ya tienes cuenta?'}
@@ -312,7 +455,17 @@ const AuthForm: React.FC<AuthFormProps> = ({ onAuthSuccess }) => {
             type="button"
             onClick={toggleMode}
             disabled={status === 'loading'}
-            className="text-blue-400 hover:text-blue-300 font-semibold transition-colors"
+            style={{
+              color: '#60a5fa',
+              fontWeight: 600,
+              background: 'none',
+              border: 'none',
+              cursor: status === 'loading' ? 'not-allowed' : 'pointer',
+              padding: 0,
+              transition: 'color 0.2s'
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.color = '#3b82f6'}
+            onMouseLeave={(e) => e.currentTarget.style.color = '#60a5fa'}
           >
             {mode === 'login' ? 'Regístrate' : 'Inicia sesión'}
           </button>
@@ -320,8 +473,17 @@ const AuthForm: React.FC<AuthFormProps> = ({ onAuthSuccess }) => {
       </div>
 
       {/* Footer Info */}
-      <div className="mt-6 pt-6 border-t border-white/10">
-        <p className="text-xs text-gray-500 text-center">
+      <div style={{
+        marginTop: 20,
+        paddingTop: 16,
+        borderTop: '1px solid rgba(255, 255, 255, 0.08)'
+      }}>
+        <p style={{
+          fontSize: 10,
+          color: '#6b7280',
+          textAlign: 'center',
+          lineHeight: 1.5
+        }}>
           Al continuar, aceptas que SYNAPSE UI analice tu rostro de forma local 
           para mejorar tu productividad. No se almacenan imágenes ni videos.
         </p>

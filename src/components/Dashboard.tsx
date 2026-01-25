@@ -11,14 +11,12 @@ interface DashboardProps {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ data, focusScore, stressLevel, alertLevel }) => {
-  // Calcular emoción dominante
   const emotion = data 
     ? Object.keys(data.expressions).reduce((a, b) => 
         data.expressions[a] > data.expressions[b] ? a : b
       ) 
     : 'neutral';
 
-  // Mapear emociones a español con emojis
   const emotionMap: Record<string, string> = {
     happy: '😊 Feliz',
     sad: '😢 Triste',
@@ -29,9 +27,8 @@ const Dashboard: React.FC<DashboardProps> = ({ data, focusScore, stressLevel, al
     fearful: '😨 Temeroso'
   };
 
-  // Estados del sistema
   const getSystemState = () => {
-    if (stressLevel >= 60) return { text: 'Modo Calmante Activo', color: '#4ade80' };
+    if (stressLevel >= 60) return { text: 'Modo Calmante', color: '#4ade80' };
     if (focusScore >= 75) return { text: 'Flujo Detectado', color: '#60a5fa' };
     if (alertLevel < 30) return { text: 'Fatiga Detectada', color: '#fbbf24' };
     return { text: 'Monitoreo Normal', color: '#8b5cf6' };
@@ -39,7 +36,6 @@ const Dashboard: React.FC<DashboardProps> = ({ data, focusScore, stressLevel, al
 
   const systemState = getSystemState();
 
-  // Componente de métrica circular
   const CircularMetric = ({ 
     value, 
     label, 
@@ -51,81 +47,118 @@ const Dashboard: React.FC<DashboardProps> = ({ data, focusScore, stressLevel, al
     color: string; 
     icon: any;
   }) => {
-    const circumference = 2 * Math.PI * 45;
+    const radius = 35;
+    const circumference = 2 * Math.PI * radius;
     const strokeDashoffset = circumference - (value / 100) * circumference;
 
     return (
-      <div className="flex flex-col items-center">
-        <div className="relative w-32 h-32">
-          <svg className="transform -rotate-90 w-32 h-32">
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <div style={{ position: 'relative', width: 90, height: 90 }}>
+          <svg style={{ transform: 'rotate(-90deg)', width: 90, height: 90 }}>
             <circle
-              cx="64"
-              cy="64"
-              r="45"
-              stroke="#1e293b"
-              strokeWidth="8"
+              cx="45"
+              cy="45"
+              r={radius}
+              stroke="rgba(30, 41, 59, 0.5)"
+              strokeWidth="6"
               fill="none"
             />
             <motion.circle
-              cx="64"
-              cy="64"
-              r="45"
+              cx="45"
+              cy="45"
+              r={radius}
               stroke={color}
-              strokeWidth="8"
+              strokeWidth="6"
               fill="none"
               strokeDasharray={circumference}
               strokeDashoffset={strokeDashoffset}
               strokeLinecap="round"
               initial={false}
               animate={{ strokeDashoffset }}
-              transition={{ type: "tween", duration: 0.9, ease: "easeOut" }}
+              transition={{ type: "spring", damping: 15, stiffness: 100 }}
             />
-
           </svg>
-          <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <Icon size={24} color={color} />
-            <span className="text-2xl font-bold text-white mt-1">{Math.round(value)}</span>
+          <div style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}>
+            <Icon size={18} color={color} />
+            <span style={{ fontSize: 20, fontWeight: 700, color: 'white', marginTop: 2 }}>
+              {Math.round(value)}
+            </span>
           </div>
         </div>
-        <p className="text-sm text-gray-400 mt-2">{label}</p>
+        <p style={{ fontSize: 11, color: '#94a3b8', marginTop: 6 }}>{label}</p>
       </div>
     );
   };
 
   return (
-    <div className="w-full max-w-[336px] p-6 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white font-sans rounded-lg">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+    <div style={{ width: '100%' }}>
+      {/* Header con título */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 16
+      }}>
+        <h1 style={{
+          fontSize: 20,
+          fontWeight: 800,
+          background: 'linear-gradient(135deg, #60a5fa, #8b5cf6)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          backgroundClip: 'text'
+        }}>
           SYNAPSE UI
         </h1>
         <motion.div
-          animate={{ scale: [1, 1.1, 1] }}
+          animate={{ scale: [1, 1.2, 1] }}
           transition={{ duration: 2, repeat: Infinity }}
-          className="w-3 h-3 rounded-full"
-          style={{ backgroundColor: systemState.color }}
+          style={{
+            width: 10,
+            height: 10,
+            borderRadius: '50%',
+            backgroundColor: systemState.color,
+            boxShadow: `0 0 10px ${systemState.color}`
+          }}
         />
       </div>
 
       {/* Estado del Sistema */}
       <motion.div
-        className="mb-6 p-4 rounded-lg backdrop-blur-md bg-white/5 border border-white/10"
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
+        style={{
+          marginBottom: 16,
+          padding: 12,
+          borderRadius: 12,
+          background: 'rgba(255, 255, 255, 0.03)',
+          border: '1px solid rgba(255, 255, 255, 0.08)'
+        }}
       >
-        <div className="flex items-center gap-2">
-          <Activity size={20} color={systemState.color} />
-          <span className="text-lg font-medium" style={{ color: systemState.color }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Activity size={18} color={systemState.color} />
+          <span style={{ fontSize: 14, fontWeight: 600, color: systemState.color }}>
             {systemState.text}
           </span>
         </div>
-        <p className="text-sm text-gray-400 mt-2">
+        <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 6 }}>
           Emoción: {emotionMap[emotion] || emotion}
         </p>
       </motion.div>
 
       {/* Métricas Circulares */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(3, 1fr)',
+        gap: 12,
+        marginBottom: 16
+      }}>
         <CircularMetric 
           value={focusScore} 
           label="Enfoque" 
@@ -146,48 +179,70 @@ const Dashboard: React.FC<DashboardProps> = ({ data, focusScore, stressLevel, al
         />
       </div>
 
-      {/* Métricas Detalladas */}
+      {/* Análisis Emocional (Collapsible) */}
       {data && (
         <motion.div
-          className="p-4 rounded-lg backdrop-blur-md bg-white/5 border border-white/10"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ delay: 0.3 }}
+          transition={{ delay: 0.2 }}
+          style={{
+            padding: 12,
+            borderRadius: 12,
+            background: 'rgba(255, 255, 255, 0.03)',
+            border: '1px solid rgba(255, 255, 255, 0.08)'
+          }}
         >
-          <h3 className="text-sm font-semibold mb-3 text-gray-300">Análisis Emocional</h3>
-          <div className="space-y-2">
-            {Object.entries(data.expressions).map(([key, value]) => (
-              <div key={key} className="flex items-center gap-2">
-                <span className="text-xs text-gray-400 w-20 capitalize">{key}</span>
-                <div className="flex-1 h-2 bg-slate-700 rounded-full overflow-hidden">
+          <h3 style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: '#cbd5e1',
+            marginBottom: 10
+          }}>
+            Análisis Emocional
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {Object.entries(data.expressions)
+              .sort(([, a], [, b]) => b - a)
+              .slice(0, 4)
+              .map(([key, value]) => (
+              <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{
+                  fontSize: 10,
+                  color: '#94a3b8',
+                  width: 60,
+                  textTransform: 'capitalize'
+                }}>
+                  {key}
+                </span>
+                <div style={{
+                  flex: 1,
+                  height: 6,
+                  background: 'rgba(30, 41, 59, 0.5)',
+                  borderRadius: 999,
+                  overflow: 'hidden'
+                }}>
                   <motion.div
-                    className="h-full bg-gradient-to-r from-blue-500 to-purple-500"
-                    initial={false}
+                    style={{
+                      height: '100%',
+                      background: 'linear-gradient(90deg, #60a5fa, #8b5cf6)',
+                      borderRadius: 999
+                    }}
+                    initial={{ width: 0 }}
                     animate={{ width: `${value * 100}%` }}
-                    transition={{ type: "tween", duration: 0.6, ease: "easeOut" }}
+                    transition={{ type: "spring", damping: 15 }}
                   />
-
                 </div>
-                <span className="text-xs text-gray-400 w-12 text-right">
+                <span style={{
+                  fontSize: 10,
+                  color: '#64748b',
+                  width: 32,
+                  textAlign: 'right'
+                }}>
                   {(value * 100).toFixed(0)}%
                 </span>
               </div>
             ))}
           </div>
-        </motion.div>
-      )}
-
-      {/* Posición de Mirada */}
-      {data && (
-        <motion.div
-          className="mt-4 p-3 rounded-lg backdrop-blur-md bg-white/5 border border-white/10"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.5 }}
-        >
-          <p className="text-xs text-gray-400">
-            Mirada: X: {data.gazeX.toFixed(0)}px | Y: {data.gazeY.toFixed(0)}px
-          </p>
         </motion.div>
       )}
     </div>
