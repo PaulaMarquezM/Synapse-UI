@@ -10,12 +10,15 @@
     "package": "plasmo package"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.91.0",
+    "date-fns": "^4.1.0",
     "face-api.js": "^0.22.2",
     "framer-motion": "^12.26.2",
     "lucide-react": "^0.562.0",
     "plasmo": "0.90.5",
     "react": "18.2.0",
-    "react-dom": "18.2.0"
+    "react-dom": "18.2.0",
+    "recharts": "^3.7.0"
   },
   "devDependencies": {
     "@ianvs/prettier-plugin-sort-imports": "4.1.1",
@@ -31,14 +34,23 @@
     "typescript": "5.3.3"
   },
   "manifest": {
-  "permissions": ["camera"],
-  "host_permissions": ["https://*/*"],
-  "web_accessible_resources": [{
-  "resources": ["assets/models/*", "assets/models/**/*"],
-  "matches": ["<all_urls>"]
-}]
-
-
-
-}
+    "permissions": [
+      "camera",
+      "storage"
+    ],
+    "host_permissions": [
+      "https://*/*"
+    ],
+    "web_accessible_resources": [
+      {
+        "resources": [
+          "assets/models/*",
+          "assets/models/**/*"
+        ],
+        "matches": [
+          "<all_urls>"
+        ]
+      }
+    ]
+  }
 }

@@ -1,7 +1,16 @@
-// src/popup.tsx
+/**
+ * SYNAPSE UI - Main Popup (Integrated)
+ * Combina autenticación + calibración + análisis cognitivo
+ */
+
 import React, { useEffect, useRef, useState } from "react"
+import { motion, AnimatePresence } from "framer-motion"
 import CameraFeed from "~components/CameraFeed"
 import Dashboard from "~components/Dashboard"
+import AuthForm from "~components/AuthForm"
+import { useAuth } from "~hooks/useAuth"
+import { signOut } from "~lib/supabase"
+import { LogOut, Loader } from "lucide-react"
 import type { DetectionData } from "~components/CameraFeed"
 import "./popup.css"
 
@@ -15,27 +24,33 @@ import {
 import { createCalibrator, type CalibrationState, type Baseline } from "~lib/calibration"
 
 const CALIBRATION_DURATION_MS = 12_000
-
-// Objetivo normal (ideal)
 const TARGET_SAMPLES = 20
-// Fallback si la cámara es mala/contraluz (igual calibramos para no bloquear UX)
 const FALLBACK_MIN_SAMPLES = 8
 
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n))
 
 const Popup = () => {
-  const [data, setData] = useState<DetectionData | null>(null)
+  // ============================================
+  // AUTH STATE
+  // ============================================
+  const { user, loading: authLoading, isAuthenticated } = useAuth()
 
+  // ============================================
+  // COGNITIVE STATE
+  // ============================================
+  const [data, setData] = useState<DetectionData | null>(null)
   const [focusScore, setFocusScore] = useState(50)
   const [stressLevel, setStressLevel] = useState(20)
   const [alertLevel, setAlertLevel] = useState(80)
-
   const [levels, setLevels] = useState<MetricsLevels>({
     focus: "Normal",
     stress: "Normal",
     alert: "Normal"
   })
 
+  // ============================================
+  // CALIBRATION STATE
+  // ============================================
   const [calState, setCalState] = useState<CalibrationState>({
     isCalibrating: true,
     isCalibrated: false,
@@ -48,18 +63,20 @@ const Popup = () => {
   })
 
   const calibratorRef = useRef(createCalibrator({ durationMs: CALIBRATION_DURATION_MS }))
-
   const smootherRef = useRef(
     createMetricsSmoother(
       { focus: 50, stress: 20, alert: 80 },
       {
         ...defaultSmoothingConfig,
-        // fluidez razonable sin demasiado “lag”
         alpha: 0.12,
         maxDeltaPerTick: 5
       }
     )
   )
+
+  // ============================================
+  // CALIBRATION FUNCTIONS
+  // ============================================
 
   const startCalibration = () => {
     calibratorRef.current = createCalibrator({ durationMs: CALIBRATION_DURATION_MS })
@@ -76,9 +93,23 @@ const Popup = () => {
     })
   }
 
+  const finalizeCalibration = () => {
+    calibratorRef.current.finish()
+    const baseline = calibratorRef.current.buildBaseline()
+
+    setCalState((prev) => ({
+      ...prev,
+      isCalibrating: false,
+      isCalibrated: true,
+      progress: 1,
+      secondsRemaining: 0,
+      baseline
+    }))
+  }
+
   // Timer de UI (progreso + samples)
   useEffect(() => {
-    if (!calState.isCalibrating) return
+    if (!calState.isCalibrating || !isAuthenticated) return
 
     const id = window.setInterval(() => {
       const { progress, secondsRemaining, timeElapsed } = calibratorRef.current.getProgress()
@@ -89,7 +120,6 @@ const Popup = () => {
 
         let message = prev.message
 
-        // Si se acabó el tiempo y casi no hay muestras, guiamos al usuario
         if (timeElapsed && samples < FALLBACK_MIN_SAMPLES) {
           message =
             "Pocas detecciones. Evita contraluz, acerca el rostro y mejora iluminación frontal."
@@ -108,35 +138,22 @@ const Popup = () => {
     }, 200)
 
     return () => window.clearInterval(id)
-  }, [calState.isCalibrating])
+  }, [calState.isCalibrating, isAuthenticated])
 
-  const finalizeCalibration = () => {
-    calibratorRef.current.finish()
-    const baseline = calibratorRef.current.buildBaseline()
-
-    setCalState((prev) => ({
-      ...prev,
-      isCalibrating: false,
-      isCalibrated: true,
-      progress: 1,
-      secondsRemaining: 0,
-      baseline
-    }))
-  }
+  // ============================================
+  // DETECTION HANDLER
+  // ============================================
 
   const handleDetection = (detectedData: DetectionData) => {
     setData(detectedData)
 
-    // 0) Calibración: acumular muestras
+    // Calibración: acumular muestras
     if (calState.isCalibrating && !calState.isCalibrated) {
       calibratorRef.current.addSample(detectedData)
 
       const samples = calibratorRef.current.getSamples()
       const { timeElapsed } = calibratorRef.current.getProgress()
 
-      // Regla de finalización robusta:
-      // - ideal: llegar a TARGET_SAMPLES
-      // - fallback: si ya pasó el tiempo y tenemos al menos FALLBACK_MIN_SAMPLES
       if (samples >= TARGET_SAMPLES) {
         finalizeCalibration()
       } else if (timeElapsed && samples >= FALLBACK_MIN_SAMPLES) {
@@ -144,17 +161,17 @@ const Popup = () => {
       }
     }
 
-    // 1) RAW metrics (tu lógica actual)
+    // RAW metrics
     const raw: Metrics = {
       focus: calculateFocusScore(detectedData),
       stress: calculateStressLevel(detectedData),
       alert: calculateAlertLevel(detectedData)
     }
 
-    // 2) Ajuste por baseline (si existe)
+    // Ajuste por baseline
     const adjusted = applyBaseline(raw, detectedData, calState.baseline)
 
-    // 3) Smoothed + levels
+    // Smoothed + levels
     const { smoothed, levels: lv } = smootherRef.current.update(adjusted)
 
     setFocusScore(smoothed.focus)
@@ -162,7 +179,7 @@ const Popup = () => {
     setAlertLevel(smoothed.alert)
     setLevels(lv)
 
-    // Emoción dominante (solo para enviar)
+    // Emoción dominante
     const exprAny = detectedData.expressions as any
     const emotion = Object.keys(exprAny).reduce((a, b) => (exprAny[a] > exprAny[b] ? a : b))
 
@@ -185,6 +202,10 @@ const Popup = () => {
       }
     })
   }
+
+  // ============================================
+  // BASELINE ADJUSTMENT
+  // ============================================
 
   const applyBaseline = (raw: Metrics, d: DetectionData, baseline: Baseline | null): Metrics => {
     if (!baseline) return raw
@@ -225,7 +246,10 @@ const Popup = () => {
     }
   }
 
-  // ---- Funciones RAW (sin cambios) ----
+  // ============================================
+  // RAW METRICS CALCULATION
+  // ============================================
+
   const calculateFocusScore = (data: DetectionData): number => {
     const { expressions, gazeX, gazeY, headPose, blinkRate } = data
 
@@ -276,6 +300,29 @@ const Popup = () => {
     return Math.round(60 + (expressions.surprised + expressions.happy) * 20)
   }
 
+  // ============================================
+  // AUTH HANDLERS
+  // ============================================
+
+  const handleLogout = async () => {
+    const { error } = await signOut()
+    if (!error) {
+      console.log("✅ Sesión cerrada")
+      // Resetear calibración al cerrar sesión
+      startCalibration()
+    }
+  }
+
+  const handleAuthSuccess = () => {
+    console.log("✅ Autenticación exitosa")
+    // Iniciar calibración automáticamente al autenticarse
+    startCalibration()
+  }
+
+  // ============================================
+  // RENDER CALIBRATION BANNER
+  // ============================================
+
   const renderCalibrationBanner = () => {
     if (!calState.isCalibrating && calState.isCalibrated) {
       return (
@@ -289,11 +336,18 @@ const Popup = () => {
               border: "1px solid rgba(255,255,255,0.14)",
               background: "rgba(255,255,255,0.06)",
               color: "white",
-              cursor: "pointer"
+              cursor: "pointer",
+              transition: "all 0.2s"
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "rgba(255,255,255,0.10)"
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "rgba(255,255,255,0.06)"
             }}
             title="Recalibrar baseline"
           >
-            Recalibrar
+            🎯 Recalibrar
           </button>
         </div>
       )
@@ -310,15 +364,17 @@ const Popup = () => {
           marginBottom: 10,
           padding: "10px 12px",
           borderRadius: 12,
-          background: "rgba(255,255,255,0.06)",
-          border: "1px solid rgba(255,255,255,0.10)",
+          background: "rgba(59, 130, 246, 0.1)",
+          border: "1px solid rgba(59, 130, 246, 0.3)",
           color: "white"
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <div
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}
+        >
           <div>
-            <div style={{ fontWeight: 700 }}>Calibrando…</div>
-            <div style={{ fontSize: 12, opacity: 0.85 }}>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>🧠 Calibrando...</div>
+            <div style={{ fontSize: 12, opacity: 0.85, marginTop: 2 }}>
               {calState.message
                 ? calState.message
                 : `Mantén el rostro centrado ${calState.secondsRemaining}s • muestras ${calState.samples}/${calState.targetSamples}`}
@@ -334,11 +390,18 @@ const Popup = () => {
               border: "1px solid rgba(255,255,255,0.14)",
               background: "rgba(255,255,255,0.06)",
               color: "white",
-              cursor: "pointer"
+              cursor: "pointer",
+              transition: "all 0.2s"
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "rgba(255,255,255,0.10)"
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "rgba(255,255,255,0.06)"
             }}
             title="Reiniciar calibración"
           >
-            Reiniciar
+            🔄 Reiniciar
           </button>
         </div>
 
@@ -355,7 +418,8 @@ const Popup = () => {
             style={{
               height: "100%",
               width: `${Math.round(calState.progress * 100)}%`,
-              background: "linear-gradient(90deg, rgba(96,165,250,1), rgba(139,92,246,1))"
+              background: "linear-gradient(90deg, rgba(96,165,250,1), rgba(139,92,246,1))",
+              transition: "width 0.3s ease"
             }}
           />
         </div>
@@ -363,19 +427,142 @@ const Popup = () => {
     )
   }
 
-  return (
-    <div style={{ minHeight: "520px" }}>
-      {renderCalibrationBanner()}
+  // ============================================
+  // LOADING STATE
+  // ============================================
 
-      {/* Cámara visible con overlay para verificar detección */}
-      <div style={{ marginBottom: 12 }}>
-        <CameraFeed onDetection={handleDetection} preview previewWidth={300} previewHeight={220} />
+  if (authLoading) {
+    return (
+      <div
+        style={{
+          width: "360px",
+          minHeight: "520px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "linear-gradient(135deg, #0b1220 0%, #1e293b 100%)"
+        }}
+      >
+        <div style={{ textAlign: "center" }}>
+          <motion.div
+            animate={{ rotate: 360 }}
+            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+            style={{ marginBottom: 16 }}
+          >
+            <Loader size={48} color="#60a5fa" />
+          </motion.div>
+          <p style={{ color: "#94a3b8", fontSize: 14 }}>Cargando SYNAPSE UI...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // ============================================
+  // NOT AUTHENTICATED - SHOW LOGIN
+  // ============================================
+
+  if (!isAuthenticated) {
+    return (
+      <div
+        style={{
+          width: "360px",
+          minHeight: "520px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "linear-gradient(135deg, #0b1220 0%, #1e293b 100%)",
+          padding: "20px"
+        }}
+      >
+        <AuthForm onAuthSuccess={handleAuthSuccess} />
+      </div>
+    )
+  }
+
+  // ============================================
+  // AUTHENTICATED - SHOW MAIN INTERFACE
+  // ============================================
+
+  return (
+    <div style={{ minHeight: "520px", background: "#0b1220", color: "white" }}>
+      {/* Header compacto con usuario y logout */}
+      <div
+        style={{
+          padding: "10px 12px",
+          borderBottom: "1px solid rgba(255,255,255,0.08)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          background: "rgba(0,0,0,0.2)"
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ fontSize: 10, color: "#94a3b8", marginBottom: 2 }}>Conectado como</p>
+          <p
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: "white",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap"
+            }}
+          >
+            {user?.email}
+          </p>
+        </div>
+        <motion.button
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
+          onClick={handleLogout}
+          style={{
+            padding: 8,
+            borderRadius: 8,
+            background: "rgba(239, 68, 68, 0.1)",
+            border: "1px solid rgba(239, 68, 68, 0.3)",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center"
+          }}
+          title="Cerrar sesión"
+        >
+          <LogOut size={16} color="#ef4444" />
+        </motion.button>
       </div>
 
-      <Dashboard data={data} focusScore={focusScore} stressLevel={stressLevel} alertLevel={alertLevel} />
+      {/* Contenido principal */}
+      <div style={{ padding: "12px" }}>
+        {renderCalibrationBanner()}
 
-      {/* Debug opcional */}
-      {/* <pre style={{ color: "white" }}>{JSON.stringify({ levels, calState }, null, 2)}</pre> */}
+        {/* Cámara con preview */}
+        <div style={{ marginBottom: 12 }}>
+          <CameraFeed onDetection={handleDetection} preview previewWidth={336} previewHeight={220} />
+        </div>
+
+        {/* Dashboard de métricas */}
+        <Dashboard
+          data={data}
+          focusScore={focusScore}
+          stressLevel={stressLevel}
+          alertLevel={alertLevel}
+        />
+      </div>
+
+      {/* Footer */}
+      <div
+        style={{
+          padding: "8px 12px",
+          borderTop: "1px solid rgba(255,255,255,0.08)",
+          textAlign: "center",
+          background: "rgba(0,0,0,0.2)"
+        }}
+      >
+        <p style={{ fontSize: 10, color: "#64748b" }}>
+          {calState.isCalibrated ? "✅ Calibrado" : "⏳ Calibrando..."} • Análisis en tiempo real •
+          Privacidad garantizada
+        </p>
+      </div>
     </div>
   )
 }

@@ -23,7 +23,11 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # local env files
-.env*
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
 out/
 build/
@@ -37,3 +41,10 @@ keys.json
 
 # typescript
 .tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
