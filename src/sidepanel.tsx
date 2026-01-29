@@ -3,10 +3,13 @@ import { motion } from "framer-motion"
 import CameraFeed from "~components/CameraFeed"
 import Dashboard from "~components/Dashboard"
 import AuthForm from "~components/AuthForm"
+import SessionControl from "~components/SessionControl"
+import SessionSummaryModal from "~components/SessionSummaryModal"
 import { useAuth } from "~hooks/useAuth"
 import { signOut } from "~lib/supabase"
 import { LogOut, Loader } from "lucide-react"
 import type { DetectionData } from "~components/CameraFeed"
+import type { SessionSummary } from "~lib/SessionManager"
 import "./sidepanel.css"
 
 import {
@@ -17,11 +20,11 @@ import {
 } from "~lib/metricsSmoothing"
 
 import { createCalibrator, type CalibrationState, type Baseline } from "~lib/calibration"
+import { createCognitiveCalculator, type CognitiveMetrics as CognitiveMetricsType } from "~lib/Cognitivethresholds"
 
 const CALIBRATION_DURATION_MS = 12_000
 const TARGET_SAMPLES = 20
 const FALLBACK_MIN_SAMPLES = 8
-const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n))
 
 const SidePanel = () => {
   const { user, loading: authLoading, isAuthenticated } = useAuth()
@@ -35,6 +38,10 @@ const SidePanel = () => {
     stress: "Normal",
     alert: "Normal"
   })
+
+  // Estados para el sistema de sesiones
+  const [showSummaryModal, setShowSummaryModal] = useState(false)
+  const [lastSessionSummary, setLastSessionSummary] = useState<SessionSummary | null>(null)
 
   const [calState, setCalState] = useState<CalibrationState>({
     isCalibrating: true,
@@ -54,6 +61,7 @@ const SidePanel = () => {
       { ...defaultSmoothingConfig, alpha: 0.12, maxDeltaPerTick: 5 }
     )
   )
+  const cognitiveCalculatorRef = useRef(createCognitiveCalculator(null))
 
   const startCalibration = () => {
     calibratorRef.current = createCalibrator({ durationMs: CALIBRATION_DURATION_MS })
@@ -72,6 +80,13 @@ const SidePanel = () => {
   const finalizeCalibration = () => {
     calibratorRef.current.finish()
     const baseline = calibratorRef.current.buildBaseline()
+    
+    // Actualizar el calculador cognitivo con el nuevo baseline
+    if (baseline) {
+      cognitiveCalculatorRef.current.updateBaseline(baseline)
+      console.log('🎯 Umbrales adaptativos actualizados:', cognitiveCalculatorRef.current.getThresholds())
+    }
+    
     setCalState((prev) => ({
       ...prev,
       isCalibrating: false,
@@ -112,13 +127,17 @@ const SidePanel = () => {
       }
     }
 
+    // NUEVO: Usar el sistema científico de cálculo cognitivo
+    const cognitiveMetrics = cognitiveCalculatorRef.current.calculate(detectedData)
+    
+    // Aplicar smoothing a las métricas científicas
     const raw: Metrics = {
-      focus: calculateFocusScore(detectedData),
-      stress: calculateStressLevel(detectedData),
-      alert: calculateAlertLevel(detectedData)
+      focus: cognitiveMetrics.focus,
+      stress: cognitiveMetrics.stress,
+      alert: 100 - cognitiveMetrics.fatigue // Invertir fatigue para "alertness"
     }
-    const adjusted = applyBaseline(raw, detectedData, calState.baseline)
-    const { smoothed, levels: lv } = smootherRef.current.update(adjusted)
+    
+    const { smoothed, levels: lv } = smootherRef.current.update(raw)
     setFocusScore(smoothed.focus)
     setStressLevel(smoothed.stress)
     setAlertLevel(smoothed.alert)
@@ -126,6 +145,7 @@ const SidePanel = () => {
 
     const exprAny = detectedData.expressions as any
     const emotion = Object.keys(exprAny).reduce((a, b) => (exprAny[a] > exprAny[b] ? a : b))
+    
     chrome.runtime.sendMessage({
       type: "UPDATE_FOCUS_DATA",
       data: {
@@ -134,76 +154,13 @@ const SidePanel = () => {
         focusScore: smoothed.focus,
         stressLevel: smoothed.stress,
         alertLevel: smoothed.alert,
-        levels: lv
+        levels: lv,
+        // Agregar métricas científicas adicionales
+        cognitiveState: cognitiveMetrics.dominantState,
+        confidence: cognitiveMetrics.confidence,
+        alerts: cognitiveMetrics.alerts
       }
     })
-  }
-
-  const applyBaseline = (raw: Metrics, d: DetectionData, baseline: Baseline | null): Metrics => {
-    if (!baseline) return raw
-    const yawDev = Math.min(1, Math.abs(d.headPose.yaw - baseline.headPose.yaw) / 35)
-    const pitchDev = Math.min(1, Math.abs(d.headPose.pitch - baseline.headPose.pitch) / 25)
-    const dx = Math.abs(d.gazeX - baseline.gazeX)
-    const dy = Math.abs(d.gazeY - baseline.gazeY)
-    const screenW = window.screen.width || 1
-    const screenH = window.screen.height || 1
-    const gazeDev = Math.min(1, (dx / screenW + dy / screenH) / 0.6)
-    const blinkDev = Math.min(1, Math.abs(d.blinkRate - baseline.blinkRate) / 12)
-    const expr = d.expressions
-    const baseExpr = baseline.expressions
-    const negNow = (expr.angry ?? 0) + (expr.sad ?? 0) + (expr.fearful ?? 0) + (expr.disgusted ?? 0)
-    const negBase = (baseExpr.angry ?? 0) + (baseExpr.sad ?? 0) + (baseExpr.fearful ?? 0) + (baseExpr.disgusted ?? 0)
-    const negDelta = clamp(negNow - negBase, -1, 1)
-    const neutralDelta = clamp((expr.neutral ?? 0) - (baseExpr.neutral ?? 0), -1, 1)
-    const focusPenalty = yawDev * 18 + pitchDev * 14 + gazeDev * 20
-    const stressBoost = negDelta * 35 + blinkDev * 12
-    const alertPenalty = neutralDelta * 18 + blinkDev * 10
-    return {
-      focus: clamp(raw.focus - focusPenalty, 0, 100),
-      stress: clamp(raw.stress + stressBoost, 0, 100),
-      alert: clamp(raw.alert - alertPenalty, 0, 100)
-    }
-  }
-
-  const calculateFocusScore = (data: DetectionData): number => {
-    const { expressions, gazeX, gazeY, headPose, blinkRate } = data
-    const emotionalWeight = (expressions.neutral + expressions.happy) * 0.5
-    const headAlignment = Math.max(0, 1 - (Math.abs(headPose.yaw) + Math.abs(headPose.pitch)) / 60)
-    const blinkFactor = blinkRate > 10 && blinkRate < 25 ? 1 : 0.7
-    const screenWidth = window.screen.width
-    const screenHeight = window.screen.height
-    const isGazeReasonable =
-      gazeX > screenWidth * 0.2 &&
-      gazeX < screenWidth * 0.8 &&
-      gazeY > screenHeight * 0.1 &&
-      gazeY < screenHeight * 0.9
-    let score = 0
-    if (isGazeReasonable && expressions.neutral > 0.4) {
-      score = 70 + emotionalWeight * 30
-    } else if (expressions.angry > 0.2 || expressions.sad > 0.2) {
-      score = 10 + emotionalWeight * 20
-    } else {
-      score = 40 + emotionalWeight * 20
-    }
-    score = score * headAlignment * blinkFactor
-    return Math.round(Math.min(100, Math.max(0, score)))
-  }
-
-  const calculateStressLevel = (data: DetectionData): number => {
-    const { expressions } = data
-    const negativeEmotions = expressions.angry + expressions.sad + expressions.surprised
-    const positiveEmotions = expressions.happy + expressions.neutral
-    const stress = negativeEmotions - positiveEmotions * 0.5
-    const level = (stress + 1) * 50
-    return Math.round(Math.min(100, Math.max(0, level)))
-  }
-
-  const calculateAlertLevel = (data: DetectionData): number => {
-    const { expressions } = data
-    if (expressions.sad > 0.3 || expressions.neutral > 0.8) {
-      return Math.round(30 + expressions.happy * 40)
-    }
-    return Math.round(60 + (expressions.surprised + expressions.happy) * 20)
   }
 
   const handleLogout = async () => {
@@ -213,6 +170,15 @@ const SidePanel = () => {
 
   const handleAuthSuccess = () => {
     startCalibration()
+  }
+
+  const handleSessionEnd = (summary: SessionSummary) => {
+    setLastSessionSummary(summary)
+    setShowSummaryModal(true)
+  }
+
+  const handleCloseSummary = () => {
+    setShowSummaryModal(false)
   }
 
   if (authLoading) {
@@ -364,6 +330,23 @@ const SidePanel = () => {
           </div>
         )}
 
+        {/* CONTROL DE SESIONES */}
+        {calState.isCalibrated && (
+          <SessionControl
+            onSessionEnd={handleSessionEnd}
+            currentMetrics={data ? {
+              focus: focusScore,
+              stress: stressLevel,
+              fatigue: 100 - alertLevel, // Usar fatigue real
+              distraction: 100 - focusScore,
+              dominantState: levels.focus === "Alto" ? "focus" : 
+                            levels.stress === "Alto" ? "stress" : 
+                            levels.alert === "Bajo" ? "fatigue" : "neutral",
+              confidence: cognitiveCalculatorRef.current.calculate(data).confidence
+            } : null}
+          />
+        )}
+
         {/* CÁMARA */}
         <div style={{ marginBottom: 18 }}>
           <CameraFeed 
@@ -389,6 +372,13 @@ const SidePanel = () => {
           {calState.isCalibrated ? "✅" : "⏳"} Análisis en tiempo real • Privacidad garantizada
         </p>
       </div>
+
+      {/* MODAL DE RESUMEN */}
+      <SessionSummaryModal
+        isOpen={showSummaryModal}
+        onClose={handleCloseSummary}
+        summary={lastSessionSummary}
+      />
     </div>
   )
 }
