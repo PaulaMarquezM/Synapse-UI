@@ -3,9 +3,24 @@ import React, { useEffect, useRef, useState } from "react"
 import type * as FaceApi from "face-api.js"
 import { installModelFetchPatch } from "~lib/installModelFetchPatch"
 
+const EXPRESSION_KEYS = ["neutral", "happy", "sad", "angry", "fearful", "disgusted", "surprised"] as const
+type ExpressionKey = (typeof EXPRESSION_KEYS)[number]
+type ExpressionMap = Record<ExpressionKey, number>
+
+const normalizeExpressions = (expressions: FaceApi.FaceExpressions): ExpressionMap => ({
+  neutral: expressions.neutral ?? 0,
+  happy: expressions.happy ?? 0,
+  sad: expressions.sad ?? 0,
+  angry: expressions.angry ?? 0,
+  fearful: expressions.fearful ?? 0,
+  disgusted: expressions.disgusted ?? 0,
+  surprised: expressions.surprised ?? 0
+})
+
+
 // Datos que se envían al Dashboard
 export interface DetectionData {
-  expressions: FaceApi.FaceExpressions
+  expressions: ExpressionMap
   gazeX: number
   gazeY: number
   headPose: {
@@ -66,7 +81,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
   const earBaselineRef = useRef<number | null>(null)
 
   // Stabilizers
-  const smoothedExpressionsRef = useRef<Record<string, number> | null>(null)
+  const smoothedExpressionsRef = useRef<ExpressionMap | null>(null)
   const smoothedPoseRef = useRef<{ yaw: number; pitch: number; roll: number } | null>(null)
   const smoothedGazeRef = useRef<{ x: number; y: number } | null>(null)
   const lastGoodDetectionAtRef = useRef(0)
@@ -214,23 +229,22 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
     return next
   }
 
-  const smoothExpressions = (expressions: FaceApi.FaceExpressions) => {
-    const exprAny = expressions as Record<string, number>
+  const smoothExpressions = (expressions: FaceApi.FaceExpressions): ExpressionMap => {
+    const base = normalizeExpressions(expressions)
     const prev = smoothedExpressionsRef.current
     if (!prev) {
-      const init = { ...exprAny }
-      smoothedExpressionsRef.current = init
-      return init as FaceApi.FaceExpressions
+      smoothedExpressionsRef.current = base
+      return base
     }
 
-    const next: Record<string, number> = { ...prev }
-    for (const k of Object.keys(exprAny)) {
-      const prevVal = prev[k] ?? 0
-      const nextVal = exprAny[k] ?? 0
+    const next: ExpressionMap = { ...prev }
+    for (const k of EXPRESSION_KEYS) {
+      const prevVal = prev[k]
+      const nextVal = base[k]
       next[k] = clamp(smoothValue(prevVal, nextVal, EXP_SMOOTH_ALPHA), 0, 1)
     }
     smoothedExpressionsRef.current = next
-    return next as FaceApi.FaceExpressions
+    return next
   }
 
   const resetStabilizers = () => {
@@ -369,7 +383,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
      ============================ */
   const drawOverlay = (
     detections: FaceApi.WithFaceLandmarks<any> & FaceApi.WithFaceExpressions<any>,
-    expressionsOverride?: FaceApi.FaceExpressions
+    expressionsOverride?: ExpressionMap
   ) => {
     const canvas = canvasRef.current
     const video = videoRef.current
@@ -402,7 +416,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
     }
 
     // texto pequeño: emoción dominante (opcional)
-    const exprAny = (expressionsOverride ?? detections.expressions) as Record<string, number>
+    const exprAny = expressionsOverride ?? normalizeExpressions(detections.expressions)
     const emotion = Object.keys(exprAny).reduce((a, k) => (exprAny[k] > exprAny[a] ? k : a), "neutral")
 
     ctx.fillStyle = "rgba(255,255,255,0.9)"
