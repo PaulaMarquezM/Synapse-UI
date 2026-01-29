@@ -25,6 +25,22 @@ interface CameraFeedProps {
   previewHeight?: number
 }
 
+const DETECTION_INTERVAL_MS = 200
+const TINY_INPUT_SIZE = 320
+const MIN_FACE_SCORE = 0.45
+const MIN_FACE_AREA = 0.03
+const MAX_FACE_AREA = 0.6
+
+const EXP_SMOOTH_ALPHA = 0.35
+const POSE_SMOOTH_ALPHA = 0.25
+const GAZE_SMOOTH_ALPHA = 0.2
+const EAR_BASELINE_ALPHA = 0.03
+const BLINK_CLOSE_RATIO = 0.65
+const BLINK_OPEN_HYSTERESIS = 0.02
+const MIN_BLINK_MS = 60
+const MAX_BLINK_MS = 400
+const RESET_STABILIZERS_AFTER_MS = 2000
+
 const CameraFeed: React.FC<CameraFeedProps> = ({
   onDetection,
   preview = false,
@@ -36,13 +52,24 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
 
   // Módulo face-api
   const faceapiRef = useRef<typeof import("face-api.js") | null>(null)
+  const tinyOptionsRef = useRef<FaceApi.TinyFaceDetectorOptions | null>(null)
 
   const [modelsLoaded, setModelsLoaded] = useState(false)
   const [isInitialized, setIsInitialized] = useState(false)
 
   // Parpadeo
   const blinkHistory = useRef<number[]>([])
-  const lastEyeState = useRef<boolean>(true)
+  const blinkStateRef = useRef<{ isBlinking: boolean; startedAt: number | null }>({
+    isBlinking: false,
+    startedAt: null
+  })
+  const earBaselineRef = useRef<number | null>(null)
+
+  // Stabilizers
+  const smoothedExpressionsRef = useRef<Record<string, number> | null>(null)
+  const smoothedPoseRef = useRef<{ yaw: number; pitch: number; roll: number } | null>(null)
+  const smoothedGazeRef = useRef<{ x: number; y: number } | null>(null)
+  const lastGoodDetectionAtRef = useRef(0)
 
   // Control loop
   const isDetectingRef = useRef(false)
@@ -152,6 +179,89 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
     }
   }
 
+  
+  const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n))
+
+  const smoothValue = (prev: number, next: number, alpha: number) =>
+    prev + alpha * (next - prev)
+
+  const smoothPose = (pose: { yaw: number; pitch: number; roll: number }) => {
+    const prev = smoothedPoseRef.current
+    if (!prev) {
+      smoothedPoseRef.current = pose
+      return pose
+    }
+    const next = {
+      yaw: smoothValue(prev.yaw, pose.yaw, POSE_SMOOTH_ALPHA),
+      pitch: smoothValue(prev.pitch, pose.pitch, POSE_SMOOTH_ALPHA),
+      roll: smoothValue(prev.roll, pose.roll, POSE_SMOOTH_ALPHA)
+    }
+    smoothedPoseRef.current = next
+    return next
+  }
+
+  const smoothGaze = (gaze: { x: number; y: number }) => {
+    const prev = smoothedGazeRef.current
+    if (!prev) {
+      smoothedGazeRef.current = gaze
+      return gaze
+    }
+    const next = {
+      x: smoothValue(prev.x, gaze.x, GAZE_SMOOTH_ALPHA),
+      y: smoothValue(prev.y, gaze.y, GAZE_SMOOTH_ALPHA)
+    }
+    smoothedGazeRef.current = next
+    return next
+  }
+
+  const smoothExpressions = (expressions: FaceApi.FaceExpressions) => {
+    const exprAny = expressions as Record<string, number>
+    const prev = smoothedExpressionsRef.current
+    if (!prev) {
+      const init = { ...exprAny }
+      smoothedExpressionsRef.current = init
+      return init as FaceApi.FaceExpressions
+    }
+
+    const next: Record<string, number> = { ...prev }
+    for (const k of Object.keys(exprAny)) {
+      const prevVal = prev[k] ?? 0
+      const nextVal = exprAny[k] ?? 0
+      next[k] = clamp(smoothValue(prevVal, nextVal, EXP_SMOOTH_ALPHA), 0, 1)
+    }
+    smoothedExpressionsRef.current = next
+    return next as FaceApi.FaceExpressions
+  }
+
+  const resetStabilizers = () => {
+    smoothedExpressionsRef.current = null
+    smoothedPoseRef.current = null
+    smoothedGazeRef.current = null
+    earBaselineRef.current = null
+    blinkStateRef.current = { isBlinking: false, startedAt: null }
+  }
+
+  const computeEyeAspectRatio = (eye: FaceApi.Point[]) => {
+    if (eye.length < 6) return 0
+    const height1 = Math.abs(eye[1].y - eye[5].y)
+    const height2 = Math.abs(eye[2].y - eye[4].y)
+    const width = Math.abs(eye[3].x - eye[0].x)
+    return (height1 + height2) / Math.max(1e-6, 2 * width)
+  }
+
+  const isDetectionReliable = (
+    detections: FaceApi.WithFaceLandmarks<any> & FaceApi.WithFaceExpressions<any>,
+    vw: number,
+    vh: number
+  ) => {
+    const score = detections.detection.score ?? 1
+    if (score < MIN_FACE_SCORE) return false
+    const b = detections.detection.box
+    const areaRatio = (b.width * b.height) / Math.max(1, vw * vh)
+    if (areaRatio < MIN_FACE_AREA || areaRatio > MAX_FACE_AREA) return false
+    return true
+  }
+
   /* ============================
      CÁLCULO DE ORIENTACIÓN
      ============================ */
@@ -184,21 +294,46 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
   /* ============================
      DETECCIÓN DE PARPADEO
      ============================ */
-  const detectBlink = (landmarks: FaceApi.FaceLandmarks68): boolean => {
+  const updateBlinkState = (landmarks: FaceApi.FaceLandmarks68): boolean => {
     const leftEye = landmarks.getLeftEye()
     const rightEye = landmarks.getRightEye()
 
-    const leftEyeHeight = Math.abs(leftEye[1].y - leftEye[5].y)
-    const rightEyeHeight = Math.abs(rightEye[1].y - rightEye[5].y)
-
-    const leftEyeWidth = Math.abs(leftEye[3].x - leftEye[0].x)
-    const rightEyeWidth = Math.abs(rightEye[3].x - rightEye[0].x)
-
-    const leftEAR = leftEyeHeight / Math.max(1e-6, leftEyeWidth)
-    const rightEAR = rightEyeHeight / Math.max(1e-6, rightEyeWidth)
+    const leftEAR = computeEyeAspectRatio(leftEye)
+    const rightEAR = computeEyeAspectRatio(rightEye)
     const avgEAR = (leftEAR + rightEAR) / 2
 
-    return avgEAR < 0.15
+    if (!blinkStateRef.current.isBlinking) {
+      earBaselineRef.current =
+        earBaselineRef.current === null
+          ? avgEAR
+          : smoothValue(earBaselineRef.current, avgEAR, EAR_BASELINE_ALPHA)
+    }
+
+    const baseline = earBaselineRef.current ?? avgEAR
+    const closeThreshold = Math.max(0.08, baseline * BLINK_CLOSE_RATIO)
+    const openThreshold = closeThreshold + BLINK_OPEN_HYSTERESIS
+
+    const now = Date.now()
+
+    if (!blinkStateRef.current.isBlinking) {
+      if (avgEAR < closeThreshold) {
+        blinkStateRef.current.isBlinking = true
+        blinkStateRef.current.startedAt = now
+      }
+    } else {
+      if (avgEAR > openThreshold) {
+        const startedAt = blinkStateRef.current.startedAt ?? now
+        const duration = now - startedAt
+        blinkStateRef.current.isBlinking = false
+        blinkStateRef.current.startedAt = null
+
+        if (duration >= MIN_BLINK_MS && duration <= MAX_BLINK_MS) {
+          blinkHistory.current.push(now)
+        }
+      }
+    }
+
+    return blinkStateRef.current.isBlinking
   }
 
   /* ============================
@@ -212,8 +347,10 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
     const faceCenterX = box.x + box.width / 2
     const faceCenterY = box.y + box.height / 2
 
-    const screenX = window.screen.width * (1 - faceCenterX / videoWidth)
-    const screenY = window.screen.height * (faceCenterY / videoHeight)
+    const screenW = window.screen.width || 1
+    const screenH = window.screen.height || 1
+    const screenX = clamp(screenW * (1 - faceCenterX / videoWidth), 0, screenW)
+    const screenY = clamp(screenH * (faceCenterY / videoHeight), 0, screenH)
 
     return { x: screenX, y: screenY }
   }
@@ -230,7 +367,10 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
   /* ============================
      DIBUJO OVERLAY (box + landmarks)
      ============================ */
-  const drawOverlay = (detections: FaceApi.WithFaceLandmarks<any> & FaceApi.WithFaceExpressions<any>) => {
+  const drawOverlay = (
+    detections: FaceApi.WithFaceLandmarks<any> & FaceApi.WithFaceExpressions<any>,
+    expressionsOverride?: FaceApi.FaceExpressions
+  ) => {
     const canvas = canvasRef.current
     const video = videoRef.current
     if (!canvas || !video) return
@@ -262,7 +402,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
     }
 
     // texto pequeño: emoción dominante (opcional)
-    const exprAny = detections.expressions as any
+    const exprAny = (expressionsOverride ?? detections.expressions) as Record<string, number>
     const emotion = Object.keys(exprAny).reduce((a, k) => (exprAny[k] > exprAny[a] ? k : a), "neutral")
 
     ctx.fillStyle = "rgba(255,255,255,0.9)"
@@ -302,26 +442,33 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
       }
 
       try {
+        if (!tinyOptionsRef.current) {
+          tinyOptionsRef.current = new faceapi.TinyFaceDetectorOptions({
+            inputSize: TINY_INPUT_SIZE,
+            scoreThreshold: MIN_FACE_SCORE
+          })
+        }
+
         const detections = await faceapi
-          .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+          .detectSingleFace(video, tinyOptionsRef.current)
           .withFaceLandmarks()
           .withFaceExpressions()
 
-        if (detections) {
+        if (detections && isDetectionReliable(detections, vw, vh)) {
+          lastGoodDetectionAtRef.current = Date.now()
+
+          const expressions = smoothExpressions(detections.expressions)
+          const headPose = smoothPose(calculateHeadPose(detections.landmarks))
+          const gaze = smoothGaze(estimateGaze(detections))
+
           // overlay visual (si preview)
-          if (preview) drawOverlay(detections)
+          if (preview) drawOverlay(detections, expressions)
 
-          const headPose = calculateHeadPose(detections.landmarks)
-
-          const isBlinking = detectBlink(detections.landmarks)
-          if (isBlinking && lastEyeState.current) blinkHistory.current.push(Date.now())
-          lastEyeState.current = !isBlinking
-
+          updateBlinkState(detections.landmarks)
           const blinkRate = updateBlinkRate()
-          const gaze = estimateGaze(detections)
 
           const combinedData: DetectionData = {
-            expressions: detections.expressions,
+            expressions,
             gazeX: gaze.x,
             gazeY: gaze.y,
             headPose,
@@ -330,10 +477,14 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
 
           onDetection(combinedData)
         } else {
-          // si no hay detección, limpiamos overlay para que sea obvio
+          // si no hay deteccion, limpiamos overlay para que sea obvio
           if (preview && canvasRef.current) {
             const ctx = canvasRef.current.getContext("2d")
             if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+          }
+
+          if (Date.now() - lastGoodDetectionAtRef.current > RESET_STABILIZERS_AFTER_MS) {
+            resetStabilizers()
           }
         }
       } catch (error) {
@@ -341,7 +492,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
       }
 
       // Menos carga que 150ms. Si quieres más fluido, baja a 150 luego.
-      setTimeout(tick, 200)
+      setTimeout(tick, DETECTION_INTERVAL_MS)
     }
 
     void tick()
