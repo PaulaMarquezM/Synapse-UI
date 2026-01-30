@@ -104,11 +104,29 @@ export const GAZE_ZONES = {
   }
 } as const
 
+export const ATTENTION_RULES = {
+  offscreenGraceMs: 2000,
+  offscreenMaxMs: 8000,
+  offscreenMaxPenalty: 35,
+  phonePitchDeg: 18,
+  phoneGazeY: 0.75,
+  sideYawDeg: 25,
+  offscreenYawDeg: 35
+} as const
+
+
 // ============================================================================
 // SISTEMA DE CLASIFICACIÓN COGNITIVA
 // ============================================================================
 
 export type CognitiveState = 'deep_focus' | 'focus' | 'normal' | 'distracted' | 'stressed' | 'tired' | 'drowsy'
+type AttentionState = {
+  onScreen: boolean
+  offScreenMs: number
+  phoneLooking: boolean
+  sideLooking: boolean
+}
+
 
 export interface CognitiveMetrics {
   // Métricas primarias (0-100)
@@ -120,6 +138,9 @@ export interface CognitiveMetrics {
   // Estado clasificado
   dominantState: CognitiveState
   
+  // Atencion visual
+  attention: AttentionState
+
   // Confianza del modelo (0-1)
   confidence: number
   
@@ -152,6 +173,10 @@ export interface AdaptiveThresholds {
 export class CognitiveMetricsCalculator {
   private adaptiveThresholds: AdaptiveThresholds
   private baseline: Baseline | null = null
+  private offScreenSince: number | null = null
+  private lastSeenAt: number = 0
+  private lastOnScreenAt: number = 0
+
   
   constructor(baseline: Baseline | null = null) {
     this.baseline = baseline
@@ -219,11 +244,15 @@ export class CognitiveMetricsCalculator {
    * CÁLCULO PRINCIPAL - Analiza DetectionData y retorna métricas cognitivas
    */
   calculate(data: DetectionData): CognitiveMetrics {
+    const now = Date.now()
+    this.lastSeenAt = now
+    const attention = this.evaluateAttention(data, now)
+
     // 1. Calcular confianza del modelo
     const confidence = this.calculateConfidence(data)
     
     // 2. Calcular métricas individuales
-    const focus = this.calculateFocus(data)
+    const focus = this.calculateFocus(data, attention)
     const stress = this.calculateStress(data)
     const fatigue = this.calculateFatigue(data)
     const distraction = 100 - focus // Inverso del foco
@@ -232,7 +261,7 @@ export class CognitiveMetricsCalculator {
     const dominantState = this.classifyDominantState(focus, stress, fatigue)
     
     // 4. Generar alertas
-    const alerts = this.generateAlerts(focus, stress, fatigue, data)
+    const alerts = this.generateAlerts(focus, stress, fatigue, data, attention)
     
     return {
       focus,
@@ -240,11 +269,52 @@ export class CognitiveMetricsCalculator {
       fatigue,
       distraction,
       dominantState,
+      attention,
       confidence,
       alerts
     }
   }
   
+  private evaluateAttention(data: DetectionData, now: number): AttentionState {
+    const screenW = window.screen.width || 1
+    const screenH = window.screen.height || 1
+    const gazeXn = data.gazeX / screenW
+    const gazeYn = data.gazeY / screenH
+    const baseYaw = this.baseline?.headPose.yaw ?? 0
+    const basePitch = this.baseline?.headPose.pitch ?? 0
+    const yawDev = Math.abs(data.headPose.yaw - baseYaw)
+    const pitchDev = Math.abs(data.headPose.pitch - basePitch)
+
+    const inExtended = 
+      gazeXn >= GAZE_ZONES.EXTENDED.x.min && gazeXn <= GAZE_ZONES.EXTENDED.x.max &&
+      gazeYn >= 0.15 && gazeYn <= GAZE_ZONES.EXTENDED.y.max
+
+    const onScreen = inExtended && yawDev < ATTENTION_RULES.offscreenYawDeg && pitchDev < 28
+    const phoneLooking = pitchDev > ATTENTION_RULES.phonePitchDeg && gazeYn > ATTENTION_RULES.phoneGazeY
+    const sideLooking = yawDev > ATTENTION_RULES.sideYawDeg || gazeXn < GAZE_ZONES.CENTER.x.min || gazeXn > GAZE_ZONES.CENTER.x.max
+
+    if (onScreen) {
+      this.offScreenSince = null
+      this.lastOnScreenAt = now
+    } else if (!this.offScreenSince) {
+      this.offScreenSince = now
+    }
+
+    const offScreenMs = this.offScreenSince ? now - this.offScreenSince : 0
+    return { onScreen, offScreenMs, phoneLooking, sideLooking }
+  }
+
+  private computeAttentionPenalty(attention: AttentionState): number {
+    if (attention.onScreen) return 0
+    const effectiveMs = Math.max(0, attention.offScreenMs - ATTENTION_RULES.offscreenGraceMs)
+    const range = Math.max(1, ATTENTION_RULES.offscreenMaxMs - ATTENTION_RULES.offscreenGraceMs)
+    const t = Math.min(1, effectiveMs / range)
+    let penalty = ATTENTION_RULES.offscreenMaxPenalty * t
+    if (attention.phoneLooking) penalty += 10
+    else if (attention.sideLooking) penalty += 5
+    return Math.min(45, penalty)
+  }
+
   /**
    * FOCO (0-100) - VERSIÓN MEJORADA CON PENALIZACIONES AGRESIVAS
    * Factores: postura cabeza (40%), mirada (30%), expresiones (20%), parpadeo (10%)
@@ -254,7 +324,7 @@ export class CognitiveMetricsCalculator {
    * - Girar/bajar cara → PENALIZACIÓN FUERTE (-30 puntos)
    * - Parpadeo excesivo → PENALIZACIÓN MODERADA (-15 puntos)
    */
-  private calculateFocus(data: DetectionData): number {
+  private calculateFocus(data: DetectionData, attention: AttentionState): number {
     const { headPose, gazeX, gazeY, blinkRate, expressions } = data
     
     let score = 100 // Empezar con 100 y restar penalizaciones
@@ -356,6 +426,12 @@ export class CognitiveMetricsCalculator {
     
     score -= blinkPenalty
     
+    // ============================================================
+    // 4.5. ATENCION VISUAL (penaliza si mira fuera de pantalla)
+    // ============================================================
+    const attentionPenalty = this.computeAttentionPenalty(attention)
+    score -= attentionPenalty
+
     // ============================================================
     // 5. BONUS POR FOCO PROFUNDO
     // ============================================================
@@ -540,7 +616,7 @@ export class CognitiveMetricsCalculator {
   /**
    * GENERACIÓN DE ALERTAS
    */
-  private generateAlerts(focus: number, stress: number, fatigue: number, data: DetectionData) {
+  private generateAlerts(focus: number, stress: number, fatigue: number, data: DetectionData, attention: AttentionState) {
     // Detectar ojos cerrados
     const eyeClosedness = (data.expressions.neutral || 0) * (data.expressions.sad || 0) * 2
     const eyesClosed = eyeClosedness > EYE_CLOSURE_DETECTION.CLOSED_THRESHOLD || 

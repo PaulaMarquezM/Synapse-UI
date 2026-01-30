@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Play, Square, Clock, TrendingUp } from 'lucide-react';
 import { sessionManager, type SessionSummary } from '../lib/SessionManager';
@@ -24,6 +24,7 @@ const SessionControl: React.FC<SessionControlProps> = ({
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isEnding, setIsEnding] = useState(false);
+  const hasMetricsRef = useRef(false);
 
   // Timer que se actualiza cada segundo
   useEffect(() => {
@@ -52,6 +53,7 @@ const SessionControl: React.FC<SessionControlProps> = ({
         dominantState: currentMetrics.dominantState as any,
         confidence: currentMetrics.confidence
       });
+      hasMetricsRef.current = true;
     }, 2000);
 
     return () => clearInterval(interval);
@@ -62,7 +64,19 @@ const SessionControl: React.FC<SessionControlProps> = ({
       const sessionId = await sessionManager.startSession();
       setIsSessionActive(true);
       setElapsedSeconds(0);
+      hasMetricsRef.current = false;
       console.log('✅ Sesión iniciada:', sessionId);
+      if (currentMetrics) {
+        sessionManager.recordMetrics({
+          focus: currentMetrics.focus,
+          stress: currentMetrics.stress,
+          fatigue: currentMetrics.fatigue,
+          distraction: currentMetrics.distraction,
+          dominantState: currentMetrics.dominantState as any,
+          confidence: currentMetrics.confidence
+        });
+        hasMetricsRef.current = true;
+      }
       onSessionStart?.();
     } catch (error) {
       console.error('❌ Error al iniciar sesión:', error);
@@ -72,10 +86,15 @@ const SessionControl: React.FC<SessionControlProps> = ({
 
   const handleEndSession = async () => {
     try {
+      if (!hasMetricsRef.current) {
+        alert('Aún no hay datos suficientes. Espera unos segundos y vuelve a intentar.');
+        return;
+      }
       setIsEnding(true);
       const summary = await sessionManager.endSession();
       setIsSessionActive(false);
       setElapsedSeconds(0);
+      hasMetricsRef.current = false;
       console.log('📊 Sesión finalizada:', summary);
       onSessionEnd?.(summary);
     } catch (error) {

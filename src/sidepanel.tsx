@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react"
 import { motion } from "framer-motion"
 import CameraFeed from "~components/CameraFeed"
 import Dashboard from "~components/Dashboard"
+import SessionsDashboard from "~components/SessionsDashboard"
 import AuthForm from "~components/AuthForm"
 import SessionControl from "~components/SessionControl"
 import SessionSummaryModal from "~components/SessionSummaryModal"
@@ -20,11 +21,18 @@ import {
 } from "~lib/metricsSmoothing"
 
 import { createCalibrator, type CalibrationState, type Baseline } from "~lib/calibration"
-import { createCognitiveCalculator, type CognitiveMetrics as CognitiveMetricsType } from "~lib/Cognitivethresholds"
+import { createCognitiveCalculator } from "~lib/Cognitivethresholds"
 
 const CALIBRATION_DURATION_MS = 12_000
 const TARGET_SAMPLES = 20
 const FALLBACK_MIN_SAMPLES = 8
+const NUDGE_COOLDOWN_MS = 15000
+const NO_FACE_MS = 4000
+const OFFSCREEN_NUDGE_MS = 8000
+const LOW_FOCUS_MS = 15000
+const LOW_FOCUS_THRESHOLD = 40
+const RECOVERY_FOCUS_THRESHOLD = 50
+
 
 const SidePanel = () => {
   const { user, loading: authLoading, isAuthenticated } = useAuth()
@@ -33,6 +41,7 @@ const SidePanel = () => {
   const [focusScore, setFocusScore] = useState(50)
   const [stressLevel, setStressLevel] = useState(20)
   const [alertLevel, setAlertLevel] = useState(80)
+  const [nudge, setNudge] = useState<{ id: string; type: 'info' | 'warn' | 'danger'; text: string } | null>(null)
   const [levels, setLevels] = useState<MetricsLevels>({
     focus: "Normal",
     stress: "Normal",
@@ -62,6 +71,25 @@ const SidePanel = () => {
     )
   )
   const cognitiveCalculatorRef = useRef(createCognitiveCalculator(null))
+  const lastDetectionAtRef = useRef(0)
+  const nudgeCooldownRef = useRef(0)
+  const lowFocusSinceRef = useRef<number | null>(null)
+
+
+  const clearNudge = (id?: string) => {
+    setNudge((prev) => {
+      if (!prev) return null
+      if (!id || prev.id === id) return null
+      return prev
+    })
+  }
+
+  const pushNudge = (id: string, type: 'info' | 'warn' | 'danger', textMsg: string) => {
+    const now = Date.now()
+    if (now - nudgeCooldownRef.current < NUDGE_COOLDOWN_MS) return
+    nudgeCooldownRef.current = now
+    setNudge({ id, type, text: textMsg })
+  }
 
   const startCalibration = () => {
     calibratorRef.current = createCalibrator({ durationMs: CALIBRATION_DURATION_MS })
@@ -98,6 +126,20 @@ const SidePanel = () => {
   }
 
   useEffect(() => {
+    if (!isAuthenticated) return
+    const id = window.setInterval(() => {
+      if (lastDetectionAtRef.current == 0) return
+      const since = Date.now() - lastDetectionAtRef.current
+      if (since > NO_FACE_MS) {
+        pushNudge('no-face', 'warn', 'No te veo en la camara. Vuelve al encuadre para continuar el analisis.')
+      } else {
+        clearNudge('no-face')
+      }
+    }, 1000)
+    return () => window.clearInterval(id)
+  }, [isAuthenticated])
+
+  useEffect(() => {
     if (!calState.isCalibrating || !isAuthenticated) return
     const id = window.setInterval(() => {
       const { progress, secondsRemaining, timeElapsed } = calibratorRef.current.getProgress()
@@ -117,6 +159,8 @@ const SidePanel = () => {
   }, [calState.isCalibrating, isAuthenticated])
 
   const handleDetection = (detectedData: DetectionData) => {
+    lastDetectionAtRef.current = Date.now()
+    clearNudge('no-face')
     setData(detectedData)
     if (calState.isCalibrating && !calState.isCalibrated) {
       calibratorRef.current.addSample(detectedData)
@@ -129,6 +173,15 @@ const SidePanel = () => {
 
     // NUEVO: Usar el sistema científico de cálculo cognitivo
     const cognitiveMetrics = cognitiveCalculatorRef.current.calculate(detectedData)
+    if (cognitiveMetrics.alerts.highStress) {
+      pushNudge('stress', 'danger', 'Estres alto detectado. Respira profundo 1-2 minutos y vuelve cuando te sientas mejor.')
+    }
+    if (cognitiveMetrics.alerts.phoneLooking) {
+      pushNudge('phone', 'warn', 'Parece que miras el celular. Si puedes, regresa tu mirada a la pantalla.')
+    }
+    if (!cognitiveMetrics.attention.onScreen && cognitiveMetrics.attention.offScreenMs > OFFSCREEN_NUDGE_MS) {
+      pushNudge('offscreen', 'info', 'Te alejaste de la pantalla. Vuelve para mantener el enfoque.')
+    }
     
     // Aplicar smoothing a las métricas científicas
     const raw: Metrics = {
@@ -142,6 +195,17 @@ const SidePanel = () => {
     setStressLevel(smoothed.stress)
     setAlertLevel(smoothed.alert)
     setLevels(lv)
+
+    if (smoothed.focus < LOW_FOCUS_THRESHOLD) {
+      if (!lowFocusSinceRef.current) lowFocusSinceRef.current = Date.now()
+      const lowFor = Date.now() - (lowFocusSinceRef.current || Date.now())
+      if (lowFor > LOW_FOCUS_MS) {
+        pushNudge('low-focus', 'info', 'Parece que tu foco bajo. Un pequeno ajuste y sigues avanzando.')
+      }
+    } else if (smoothed.focus >= RECOVERY_FOCUS_THRESHOLD) {
+      lowFocusSinceRef.current = null
+    }
+
 
     const exprAny = detectedData.expressions as any
     const emotion = Object.keys(exprAny).reduce((a, b) => (exprAny[a] > exprAny[b] ? a : b))
@@ -163,6 +227,11 @@ const SidePanel = () => {
     })
   }
 
+  const openDashboard = () => {
+    const url = chrome.runtime.getURL("sidepanel.html?view=dashboard")
+    chrome.tabs.create({ url })
+  }
+
   const handleLogout = async () => {
     await signOut()
     startCalibration()
@@ -179,6 +248,11 @@ const SidePanel = () => {
 
   const handleCloseSummary = () => {
     setShowSummaryModal(false)
+  }
+
+  const isDashboardView = new URLSearchParams(window.location.search).get("view") === "dashboard"
+  if (isDashboardView) {
+    return <SessionsDashboard />
   }
 
   if (authLoading) {
@@ -240,6 +314,22 @@ const SidePanel = () => {
               {user?.email}
             </p>
           </div>
+          <motion.button
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
+            onClick={openDashboard}
+            style={{
+              padding: 8,
+              borderRadius: 8,
+              background: 'rgba(96, 165, 250, 0.12)',
+              border: '1px solid rgba(96, 165, 250, 0.35)',
+              cursor: 'pointer',
+              display: 'flex'
+            }}
+            title="Abrir dashboard"
+          >
+            <span style={{ fontSize: 12, color: '#93c5fd', fontWeight: 700 }}>DB</span>
+          </motion.button>
           <motion.button
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
@@ -330,7 +420,31 @@ const SidePanel = () => {
           </div>
         )}
 
-        {/* CONTROL DE SESIONES */}
+                {nudge && (
+          <div
+            style={{
+              marginBottom: 12,
+              padding: '12px 14px',
+              borderRadius: 12,
+              background: nudge.type === 'danger'
+                ? 'rgba(239, 68, 68, 0.12)'
+                : nudge.type === 'warn'
+                ? 'rgba(251, 191, 36, 0.12)'
+                : 'rgba(96, 165, 250, 0.12)',
+              border: nudge.type === 'danger'
+                ? '1px solid rgba(239, 68, 68, 0.35)'
+                : nudge.type === 'warn'
+                ? '1px solid rgba(251, 191, 36, 0.35)'
+                : '1px solid rgba(96, 165, 250, 0.35)',
+              color: 'white',
+              fontSize: 12
+            }}
+          >
+            {nudge.text}
+          </div>
+        )}
+
+{/* CONTROL DE SESIONES */}
         {calState.isCalibrated && (
           <SessionControl
             onSessionEnd={handleSessionEnd}
