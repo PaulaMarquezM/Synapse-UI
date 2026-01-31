@@ -1,5 +1,14 @@
 import React, { useEffect, useMemo, useState } from "react"
-import { RefreshCcw, LogOut, ArrowLeft, BarChart2 } from "lucide-react"
+import { RefreshCcw, LogOut, X, BarChart2 } from "lucide-react"
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid
+} from "recharts"
 import AuthForm from "~components/AuthForm"
 import { useAuth } from "~hooks/useAuth"
 import { supabase, signOut } from "~lib/supabase"
@@ -50,6 +59,14 @@ const SessionsDashboard = () => {
     return Math.round(sum / sessions.length)
   }, [sessions])
 
+  const trendData = useMemo(() => {
+    const ordered = [...sessions].reverse()
+    return ordered.map((s, index) => ({
+      name: `S${index + 1}`,
+      focus: Math.round(s.avg_focus || 0)
+    }))
+  }, [sessions])
+
   const fetchSessions = async () => {
     if (!user) return
     setLoading(true)
@@ -83,9 +100,8 @@ const SessionsDashboard = () => {
     await signOut()
   }
 
-  const handleBack = () => {
-    const url = chrome.runtime.getURL("sidepanel.html")
-    chrome.tabs.create({ url })
+  const handleClose = () => {
+    window.close()
   }
 
   if (authLoading) {
@@ -123,7 +139,15 @@ const SessionsDashboard = () => {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0b1220", color: "white" }}>
+    <div
+      style={{
+        minHeight: "100vh",
+        height: "100vh",
+        overflowY: "auto",
+        background: "#0b1220",
+        color: "white"
+      }}
+    >
       <div
         style={{
           padding: "16px 20px",
@@ -157,7 +181,7 @@ const SessionsDashboard = () => {
 
         <div style={{ display: "flex", gap: 8 }}>
           <button
-            onClick={handleBack}
+            onClick={handleClose}
             style={{
               padding: "8px 12px",
               borderRadius: 10,
@@ -169,10 +193,10 @@ const SessionsDashboard = () => {
               alignItems: "center",
               gap: 6
             }}
-            title="Volver"
+            title="Cerrar"
           >
-            <ArrowLeft size={14} />
-            Volver
+            <X size={14} />
+            Cerrar
           </button>
 
           <button
@@ -258,6 +282,47 @@ const SessionsDashboard = () => {
           >
             <div style={{ fontSize: 11, color: "#94a3b8" }}>Promedio foco</div>
             <div style={{ fontSize: 24, fontWeight: 700 }}>{avgFocus}</div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            padding: 14,
+            borderRadius: 12,
+            background: "rgba(255,255,255,0.04)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            marginBottom: 16
+          }}
+        >
+          <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>
+            Tendencia de foco promedio por sesion
+          </div>
+          <div style={{ width: "100%", height: 220 }}>
+            <ResponsiveContainer>
+              <LineChart data={trendData} margin={{ top: 8, right: 16, left: -8, bottom: 0 }}>
+                <CartesianGrid stroke="rgba(148,163,184,0.15)" strokeDasharray="4 4" />
+                <XAxis dataKey="name" stroke="#94a3b8" tick={{ fontSize: 11 }} />
+                <YAxis domain={[0, 100]} stroke="#94a3b8" tick={{ fontSize: 11 }} />
+                <Tooltip
+                  contentStyle={{
+                    background: "#0f172a",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: 8,
+                    color: "white",
+                    fontSize: 12
+                  }}
+                  labelStyle={{ color: "#94a3b8", fontSize: 11 }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="focus"
+                  stroke="#60a5fa"
+                  strokeWidth={3}
+                  dot={{ r: 3, stroke: "#60a5fa", fill: "#0b1220" }}
+                  activeDot={{ r: 5 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
           </div>
         </div>
 
