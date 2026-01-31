@@ -20,6 +20,18 @@ const formatDate = (iso?: string | null) => {
   return d.toLocaleString()
 }
 
+const formatDateShort = (iso?: string | null) => {
+  if (!iso) return "-"
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return "-"
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  const hh = String(d.getHours()).padStart(2, "0")
+  const mm = String(d.getMinutes()).padStart(2, "0")
+  return `${m}-${day} ${hh}:${mm}`
+}
+
 const formatDuration = (seconds?: number | null) => {
   if (!seconds || seconds <= 0) return "-"
   const mins = Math.floor(seconds / 60)
@@ -51,21 +63,34 @@ const SessionsDashboard = () => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sessions, setSessions] = useState<SessionRow[]>([])
+  const [rangeDays, setRangeDays] = useState<"7" | "30" | "90" | "all">("30")
+  const [selectedSession, setSelectedSession] = useState<SessionRow | null>(null)
 
-  const totalSessions = sessions.length
+  const filteredSessions = useMemo(() => {
+    if (rangeDays === "all") return sessions
+    const days = parseInt(rangeDays, 10)
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
+    return sessions.filter((s) => {
+      const ts = s.started_at ? new Date(s.started_at).getTime() : 0
+      return ts >= cutoff
+    })
+  }, [sessions, rangeDays])
+
+  const totalSessions = filteredSessions.length
   const avgFocus = useMemo(() => {
-    if (sessions.length === 0) return 0
-    const sum = sessions.reduce((acc, s) => acc + (s.avg_focus || 0), 0)
-    return Math.round(sum / sessions.length)
-  }, [sessions])
+    if (filteredSessions.length === 0) return 0
+    const sum = filteredSessions.reduce((acc, s) => acc + (s.avg_focus || 0), 0)
+    return Math.round(sum / filteredSessions.length)
+  }, [filteredSessions])
 
   const trendData = useMemo(() => {
-    const ordered = [...sessions].reverse()
+    const ordered = [...filteredSessions].reverse()
     return ordered.map((s, index) => ({
-      name: `S${index + 1}`,
-      focus: Math.round(s.avg_focus || 0)
+      name: formatDateShort(s.started_at),
+      focus: Math.round(s.avg_focus || 0),
+      fullDate: formatDate(s.started_at)
     }))
-  }, [sessions])
+  }, [filteredSessions])
 
   const fetchSessions = async () => {
     if (!user) return
@@ -255,6 +280,38 @@ const SessionsDashboard = () => {
 
         <div
           style={{
+            display: "flex",
+            gap: 12,
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 12,
+            flexWrap: "wrap"
+          }}
+        >
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ fontSize: 12, color: "#94a3b8" }}>Rango</div>
+            <select
+              value={rangeDays}
+              onChange={(e) => setRangeDays(e.target.value as any)}
+              style={{
+                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                color: "white",
+                padding: "6px 8px",
+                borderRadius: 8,
+                fontSize: 12
+              }}
+            >
+              <option value="7">Ultimos 7 dias</option>
+              <option value="30">Ultimos 30 dias</option>
+              <option value="90">Ultimos 90 dias</option>
+              <option value="all">Todo</option>
+            </select>
+          </div>
+        </div>
+
+        <div
+          style={{
             display: "grid",
             gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
             gap: 12,
@@ -312,6 +369,11 @@ const SessionsDashboard = () => {
                     fontSize: 12
                   }}
                   labelStyle={{ color: "#94a3b8", fontSize: 11 }}
+                  formatter={(value: number) => [`${value}`, "Foco"]}
+                  labelFormatter={(label: string, payload: any) => {
+                    const p = payload && payload[0] ? payload[0].payload : null
+                    return p?.fullDate ? `Inicio: ${p.fullDate}` : label
+                  }}
                 />
                 <Line
                   type="monotone"
@@ -341,8 +403,15 @@ const SessionsDashboard = () => {
               </tr>
             </thead>
             <tbody>
-              {sessions.map((s) => (
-                <tr key={s.id} style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+              {filteredSessions.map((s) => (
+                <tr
+                  key={s.id}
+                  onClick={() => setSelectedSession(s)}
+                  style={{
+                    borderTop: "1px solid rgba(255,255,255,0.06)",
+                    cursor: "pointer"
+                  }}
+                >
                   <td style={{ padding: "10px 8px" }}>{formatDate(s.started_at)}</td>
                   <td style={{ padding: "10px 8px" }}>{formatDuration(s.duration_seconds)}</td>
                   <td style={{ padding: "10px 8px" }}>{Math.round(s.avg_focus || 0)}</td>
@@ -356,12 +425,39 @@ const SessionsDashboard = () => {
             </tbody>
           </table>
 
-          {sessions.length === 0 && !loading && (
+          {filteredSessions.length === 0 && !loading && (
             <div style={{ marginTop: 12, color: "#94a3b8" }}>
               Aun no hay sesiones guardadas.
             </div>
           )}
         </div>
+
+        {selectedSession && (
+          <div
+            style={{
+              marginTop: 16,
+              padding: 14,
+              borderRadius: 12,
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.08)"
+            }}
+          >
+            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>
+              Detalle de sesion
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8, fontSize: 12 }}>
+              <div>Inicio: {formatDate(selectedSession.started_at)}</div>
+              <div>Duracion: {formatDuration(selectedSession.duration_seconds)}</div>
+              <div>Foco: {Math.round(selectedSession.avg_focus || 0)}</div>
+              <div>Estres: {Math.round(selectedSession.avg_stress || 0)}</div>
+              <div>Fatiga: {Math.round(selectedSession.avg_fatigue || 0)}</div>
+              <div>Distraccion: {Math.round(selectedSession.avg_distraction || 0)}</div>
+              <div>Dominante: {selectedSession.dominant_state || "-"}</div>
+              <div>Interrupciones: {selectedSession.interruptions ?? 0}</div>
+              <div>Confianza: {Math.round((selectedSession.avg_confidence || 0) * 100)}%</div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -42,6 +42,12 @@ const SidePanel = () => {
   const [stressLevel, setStressLevel] = useState(20)
   const [alertLevel, setAlertLevel] = useState(80)
   const [nudge, setNudge] = useState<{ id: string; type: 'info' | 'warn' | 'danger'; text: string } | null>(null)
+  const [soundEnabled, setSoundEnabled] = useState(false)
+  const [attentionStatus, setAttentionStatus] = useState<{ label: string; color: string; bg: string }>({
+    label: "En pantalla",
+    color: "#4ade80",
+    bg: "rgba(34, 197, 94, 0.12)"
+  })
   const [levels, setLevels] = useState<MetricsLevels>({
     focus: "Normal",
     stress: "Normal",
@@ -74,7 +80,35 @@ const SidePanel = () => {
   const lastDetectionAtRef = useRef(0)
   const nudgeCooldownRef = useRef(0)
   const lowFocusSinceRef = useRef<number | null>(null)
+  const lastSoundAtRef = useRef(0)
 
+
+  useEffect(() => {
+    const stored = localStorage.getItem("synapse_sound_enabled")
+    if (stored === "1") setSoundEnabled(true)
+  }, [])
+
+  const playBeep = () => {
+    const now = Date.now()
+    if (now - lastSoundAtRef.current < 3000) return
+    lastSoundAtRef.current = now
+
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = "sine"
+      osc.frequency.value = 880
+      gain.gain.value = 0.05
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start()
+      osc.stop(ctx.currentTime + 0.2)
+      osc.onended = () => ctx.close()
+    } catch {
+      // ignore audio errors
+    }
+  }
 
   const clearNudge = (id?: string) => {
     setNudge((prev) => {
@@ -84,11 +118,17 @@ const SidePanel = () => {
     })
   }
 
-  const pushNudge = (id: string, type: 'info' | 'warn' | 'danger', textMsg: string) => {
+  const pushNudge = (
+    id: string,
+    type: 'info' | 'warn' | 'danger',
+    textMsg: string,
+    withSound: boolean = false
+  ) => {
     const now = Date.now()
     if (now - nudgeCooldownRef.current < NUDGE_COOLDOWN_MS) return
     nudgeCooldownRef.current = now
     setNudge({ id, type, text: textMsg })
+    if (soundEnabled && withSound) playBeep()
   }
 
   const startCalibration = () => {
@@ -132,6 +172,11 @@ const SidePanel = () => {
       const since = Date.now() - lastDetectionAtRef.current
       if (since > NO_FACE_MS) {
         pushNudge('no-face', 'warn', 'No te veo en la camara. Vuelve al encuadre para continuar el analisis.')
+        setAttentionStatus({
+          label: "Sin rostro",
+          color: "#fbbf24",
+          bg: "rgba(251, 191, 36, 0.12)"
+        })
       } else {
         clearNudge('no-face')
       }
@@ -173,14 +218,43 @@ const SidePanel = () => {
 
     // NUEVO: Usar el sistema científico de cálculo cognitivo
     const cognitiveMetrics = cognitiveCalculatorRef.current.calculate(detectedData)
+    if (cognitiveMetrics.alerts.phoneLooking) {
+      setAttentionStatus({
+        label: "Celular",
+        color: "#fbbf24",
+        bg: "rgba(251, 191, 36, 0.12)"
+      })
+    } else if (!cognitiveMetrics.attention.onScreen) {
+      setAttentionStatus({
+        label: "Fuera",
+        color: "#f87171",
+        bg: "rgba(239, 68, 68, 0.12)"
+      })
+    } else {
+      setAttentionStatus({
+        label: "En pantalla",
+        color: "#4ade80",
+        bg: "rgba(34, 197, 94, 0.12)"
+      })
+    }
     if (cognitiveMetrics.alerts.highStress) {
-      pushNudge('stress', 'danger', 'Estres alto detectado. Respira profundo 1-2 minutos y vuelve cuando te sientas mejor.')
+      pushNudge(
+        'stress',
+        'danger',
+        'Estres alto detectado. Respira profundo 1-2 minutos y vuelve cuando te sientas mejor.',
+        true
+      )
     }
     if (cognitiveMetrics.alerts.phoneLooking) {
-      pushNudge('phone', 'warn', 'Parece que miras el celular. Si puedes, regresa tu mirada a la pantalla.')
+      pushNudge(
+        'phone',
+        'warn',
+        'Parece que miras el celular. Si puedes, regresa tu mirada a la pantalla.',
+        true
+      )
     }
     if (!cognitiveMetrics.attention.onScreen && cognitiveMetrics.attention.offScreenMs > OFFSCREEN_NUDGE_MS) {
-      pushNudge('offscreen', 'info', 'Te alejaste de la pantalla. Vuelve para mantener el enfoque.')
+      pushNudge('offscreen', 'info', 'Te alejaste de la pantalla. Vuelve para mantener el enfoque.', true)
     }
     
     // Aplicar smoothing a las métricas científicas
@@ -230,6 +304,13 @@ const SidePanel = () => {
   const openDashboard = () => {
     const url = chrome.runtime.getURL("sidepanel.html?view=dashboard")
     chrome.tabs.create({ url })
+  }
+
+  const toggleSound = () => {
+    const next = !soundEnabled
+    setSoundEnabled(next)
+    localStorage.setItem("synapse_sound_enabled", next ? "1" : "0")
+    if (next) playBeep()
   }
 
   const handleLogout = async () => {
@@ -314,6 +395,24 @@ const SidePanel = () => {
               {user?.email}
             </p>
           </div>
+          <motion.button
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
+            onClick={toggleSound}
+            style={{
+              padding: 8,
+              borderRadius: 8,
+              background: soundEnabled ? "rgba(34, 197, 94, 0.12)" : "rgba(148, 163, 184, 0.12)",
+              border: soundEnabled ? "1px solid rgba(34, 197, 94, 0.35)" : "1px solid rgba(148, 163, 184, 0.35)",
+              cursor: "pointer",
+              display: "flex"
+            }}
+            title={soundEnabled ? "Sonido activado" : "Sonido desactivado"}
+          >
+            <span style={{ fontSize: 12, color: soundEnabled ? "#4ade80" : "#cbd5e1", fontWeight: 700 }}>
+              SND
+            </span>
+          </motion.button>
           <motion.button
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
@@ -444,7 +543,7 @@ const SidePanel = () => {
           </div>
         )}
 
-{/* CONTROL DE SESIONES */}
+        {/* CONTROL DE SESIONES */}
         {calState.isCalibrated && (
           <SessionControl
             onSessionEnd={handleSessionEnd}
@@ -460,6 +559,33 @@ const SidePanel = () => {
             } : null}
           />
         )}
+
+        <div
+          style={{
+            marginBottom: 12,
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: "1px solid rgba(255,255,255,0.08)",
+            background: "rgba(255,255,255,0.03)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between"
+          }}
+        >
+          <div style={{ fontSize: 12, color: "#94a3b8" }}>Atencion visual</div>
+          <div
+            style={{
+              padding: "4px 10px",
+              borderRadius: 999,
+              background: attentionStatus.bg,
+              color: attentionStatus.color,
+              fontSize: 11,
+              fontWeight: 700
+            }}
+          >
+            {attentionStatus.label}
+          </div>
+        </div>
 
         {/* CÁMARA */}
         <div style={{ marginBottom: 18 }}>
