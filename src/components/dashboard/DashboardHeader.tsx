@@ -1,5 +1,5 @@
 import React from "react"
-import { RefreshCcw, LogOut, X, BarChart2 } from "lucide-react"
+import { RefreshCcw, LogOut, X, BarChart2, Download } from "lucide-react"
 
 type DashboardHeaderProps = {
   email?: string | null
@@ -7,9 +7,17 @@ type DashboardHeaderProps = {
   onClose: () => void
   onRefresh: () => void
   onLogout: () => void
+  onDownload: () => void
 }
 
-const DashboardHeader: React.FC<DashboardHeaderProps> = ({ email, loading, onClose, onRefresh, onLogout }) => {
+const DashboardHeader: React.FC<DashboardHeaderProps> = ({
+  email,
+  loading,
+  onClose,
+  onRefresh,
+  onLogout,
+  onDownload
+}) => {
   return (
     <div
       style={{
@@ -43,6 +51,25 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({ email, loading, onClo
       </div>
 
       <div style={{ display: "flex", gap: 8 }}>
+        <button
+          onClick={onDownload}
+          style={{
+            padding: "8px 12px",
+            borderRadius: 10,
+            border: "1px solid rgba(148, 163, 184, 0.35)",
+            background: "rgba(148, 163, 184, 0.12)",
+            color: "#cbd5e1",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 6
+          }}
+          title="Descargar CSV"
+        >
+          <Download size={14} />
+          Descargar
+        </button>
+
         <button
           onClick={onClose}
           style={{

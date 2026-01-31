@@ -23,6 +23,7 @@ const AttentionBadge: React.FC<AttentionBadgeProps> = ({ status }) => {
         alignItems: "center",
         justifyContent: "space-between"
       }}
+      title={`Atencion visual: ${status.label}`}
     >
       <div style={{ fontSize: 12, color: "#94a3b8" }}>Atencion visual</div>
       <div

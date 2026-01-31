@@ -81,6 +81,65 @@ const SessionsDashboard = () => {
     window.close()
   }
 
+  const handleDownload = () => {
+    const headers = [
+      "id",
+      "started_at",
+      "ended_at",
+      "duration_seconds",
+      "avg_focus",
+      "avg_stress",
+      "avg_fatigue",
+      "avg_distraction",
+      "pct_focused",
+      "pct_distracted",
+      "pct_stressed",
+      "pct_tired",
+      "interruptions",
+      "focus_periods",
+      "dominant_state",
+      "avg_confidence"
+    ]
+
+    const rows = filteredSessions.map((s) => [
+      s.id,
+      s.started_at ?? "",
+      s.ended_at ?? "",
+      s.duration_seconds ?? "",
+      s.avg_focus ?? "",
+      s.avg_stress ?? "",
+      s.avg_fatigue ?? "",
+      s.avg_distraction ?? "",
+      s.pct_focused ?? "",
+      s.pct_distracted ?? "",
+      s.pct_stressed ?? "",
+      s.pct_tired ?? "",
+      s.interruptions ?? "",
+      s.focus_periods ?? "",
+      s.dominant_state ?? "",
+      s.avg_confidence ?? ""
+    ])
+
+    const escapeValue = (value: string | number) => {
+      const str = String(value)
+      if (str.includes(",") || str.includes("\"") || str.includes("\\n")) {
+        return `"${str.replace(/\"/g, "\"\"")}"`
+      }
+      return str
+    }
+
+    const csv = [headers.join(","), ...rows.map((r) => r.map(escapeValue).join(","))].join("\n")
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `synapse_sessions_${rangeDays}.csv`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
   if (authLoading) {
     return (
       <div
@@ -131,6 +190,7 @@ const SessionsDashboard = () => {
         onClose={handleClose}
         onRefresh={fetchSessions}
         onLogout={handleLogout}
+        onDownload={handleDownload}
       />
 
       <div style={{ padding: 20 }}>
