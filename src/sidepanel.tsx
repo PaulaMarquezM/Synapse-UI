@@ -6,9 +6,13 @@ import SessionsDashboard from "~components/SessionsDashboard"
 import AuthForm from "~components/AuthForm"
 import SessionControl from "~components/SessionControl"
 import SessionSummaryModal from "~components/SessionSummaryModal"
+import SidepanelHeader from "~components/sidepanel/SidepanelHeader"
+import CalibrationBanner from "~components/sidepanel/CalibrationBanner"
+import NudgeBanner from "~components/sidepanel/NudgeBanner"
+import AttentionBadge from "~components/sidepanel/AttentionBadge"
 import { useAuth } from "~hooks/useAuth"
 import { signOut } from "~lib/supabase"
-import { LogOut, Loader } from "lucide-react"
+import { Loader } from "lucide-react"
 import type { DetectionData } from "~components/CameraFeed"
 import type { SessionSummary } from "~lib/SessionManager"
 import "./sidepanel.css"
@@ -367,181 +371,18 @@ const SidePanel = () => {
 
   return (
     <div className="sidepanel-container">
-      {/* HEADER CON LOGO */}
-      <div className="sidepanel-header">
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{
-            width: 36,
-            height: 36,
-            borderRadius: 10,
-            background: "linear-gradient(135deg, #60a5fa, #8b5cf6)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 20,
-            boxShadow: "0 4px 12px rgba(96, 165, 250, 0.3)"
-          }}>
-            🧠
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{ fontSize: 12, fontWeight: 700, color: "#60a5fa", marginBottom: 2 }}>SYNAPSE UI</p>
-            <p style={{
-              fontSize: 10,
-              color: "#94a3b8",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap"
-            }}>
-              {user?.email}
-            </p>
-          </div>
-          <motion.button
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
-            onClick={toggleSound}
-            style={{
-              padding: 8,
-              borderRadius: 8,
-              background: soundEnabled ? "rgba(34, 197, 94, 0.12)" : "rgba(148, 163, 184, 0.12)",
-              border: soundEnabled ? "1px solid rgba(34, 197, 94, 0.35)" : "1px solid rgba(148, 163, 184, 0.35)",
-              cursor: "pointer",
-              display: "flex"
-            }}
-            title={soundEnabled ? "Sonido activado" : "Sonido desactivado"}
-          >
-            <span style={{ fontSize: 12, color: soundEnabled ? "#4ade80" : "#cbd5e1", fontWeight: 700 }}>
-              SND
-            </span>
-          </motion.button>
-          <motion.button
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
-            onClick={openDashboard}
-            style={{
-              padding: 8,
-              borderRadius: 8,
-              background: 'rgba(96, 165, 250, 0.12)',
-              border: '1px solid rgba(96, 165, 250, 0.35)',
-              cursor: 'pointer',
-              display: 'flex'
-            }}
-            title="Abrir dashboard"
-          >
-            <span style={{ fontSize: 12, color: '#93c5fd', fontWeight: 700 }}>DB</span>
-          </motion.button>
-          <motion.button
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
-            onClick={handleLogout}
-            style={{
-              padding: 8,
-              borderRadius: 8,
-              background: "rgba(239, 68, 68, 0.1)",
-              border: "1px solid rgba(239, 68, 68, 0.3)",
-              cursor: "pointer",
-              display: "flex"
-            }}
-          >
-            <LogOut size={16} color="#ef4444" />
-          </motion.button>
-        </div>
-      </div>
+      <SidepanelHeader
+        email={user?.email}
+        soundEnabled={soundEnabled}
+        onToggleSound={toggleSound}
+        onOpenDashboard={openDashboard}
+        onLogout={handleLogout}
+      />
 
       {/* CONTENT */}
       <div className="sidepanel-content">
-        {/* BANNER DE CALIBRACIÓN */}
-        {calState.isCalibrating ? (
-          <div style={{
-            marginBottom: 16,
-            padding: "14px 16px",
-            borderRadius: 14,
-            background: "rgba(59, 130, 246, 0.08)",
-            border: "1px solid rgba(59, 130, 246, 0.25)",
-            boxShadow: "0 4px 12px rgba(59, 130, 246, 0.1)"
-          }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 14, color: "white", marginBottom: 4 }}>
-                  🧠 Calibrando...
-                </div>
-                <div style={{ fontSize: 11, color: "#94a3b8" }}>
-                  {calState.message || `${calState.secondsRemaining}s • ${calState.samples}/${calState.targetSamples} muestras`}
-                </div>
-              </div>
-              <button
-                onClick={startCalibration}
-                style={{
-                  fontSize: 20,
-                  padding: "6px",
-                  borderRadius: 8,
-                  border: "none",
-                  background: "rgba(255,255,255,0.1)",
-                  color: "white",
-                  cursor: "pointer"
-                }}
-              >
-                🔄
-              </button>
-            </div>
-            <div style={{
-              height: 6,
-              borderRadius: 999,
-              background: "rgba(255,255,255,0.1)",
-              overflow: "hidden"
-            }}>
-              <div style={{
-                height: "100%",
-                width: `${Math.round(calState.progress * 100)}%`,
-                background: "linear-gradient(90deg, #60a5fa, #8b5cf6)",
-                transition: "width 0.3s ease",
-                boxShadow: "0 0 10px rgba(96, 165, 250, 0.5)"
-              }} />
-            </div>
-          </div>
-        ) : (
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-            <button
-              onClick={startCalibration}
-              className="glass-hover"
-              style={{
-                fontSize: 12,
-                padding: "10px 14px",
-                borderRadius: 10,
-                border: "1px solid rgba(96, 165, 250, 0.3)",
-                background: "rgba(96, 165, 250, 0.1)",
-                color: "#60a5fa",
-                cursor: "pointer",
-                fontWeight: 600
-              }}
-            >
-              🎯 Recalibrar
-            </button>
-          </div>
-        )}
-
-                {nudge && (
-          <div
-            style={{
-              marginBottom: 12,
-              padding: '12px 14px',
-              borderRadius: 12,
-              background: nudge.type === 'danger'
-                ? 'rgba(239, 68, 68, 0.12)'
-                : nudge.type === 'warn'
-                ? 'rgba(251, 191, 36, 0.12)'
-                : 'rgba(96, 165, 250, 0.12)',
-              border: nudge.type === 'danger'
-                ? '1px solid rgba(239, 68, 68, 0.35)'
-                : nudge.type === 'warn'
-                ? '1px solid rgba(251, 191, 36, 0.35)'
-                : '1px solid rgba(96, 165, 250, 0.35)',
-              color: 'white',
-              fontSize: 12
-            }}
-          >
-            {nudge.text}
-          </div>
-        )}
+        <CalibrationBanner calState={calState} onStartCalibration={startCalibration} />
+        <NudgeBanner nudge={nudge} />
 
         {/* CONTROL DE SESIONES */}
         {calState.isCalibrated && (
@@ -560,32 +401,7 @@ const SidePanel = () => {
           />
         )}
 
-        <div
-          style={{
-            marginBottom: 12,
-            padding: "10px 12px",
-            borderRadius: 10,
-            border: "1px solid rgba(255,255,255,0.08)",
-            background: "rgba(255,255,255,0.03)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between"
-          }}
-        >
-          <div style={{ fontSize: 12, color: "#94a3b8" }}>Atencion visual</div>
-          <div
-            style={{
-              padding: "4px 10px",
-              borderRadius: 999,
-              background: attentionStatus.bg,
-              color: attentionStatus.color,
-              fontSize: 11,
-              fontWeight: 700
-            }}
-          >
-            {attentionStatus.label}
-          </div>
-        </div>
+        <AttentionBadge status={attentionStatus} />
 
         {/* CÁMARA */}
         <div style={{ marginBottom: 18 }}>
