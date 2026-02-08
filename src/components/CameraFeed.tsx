@@ -5,6 +5,14 @@ import { installModelFetchPatch } from "~lib/installModelFetchPatch"
 import { createFaceStabilizers, normalizeExpressions, type ExpressionMap } from "~lib/vision/faceStabilizers"
 
 // Datos que se envían al Dashboard
+export interface DetectionQuality {
+  reliable: boolean
+  score: number
+  faceScore: number
+  areaRatio: number
+  centeredness: number
+}
+
 export interface DetectionData {
   expressions: ExpressionMap
   gazeX: number
@@ -15,6 +23,7 @@ export interface DetectionData {
     roll: number
   }
   blinkRate: number
+  quality?: DetectionQuality
 }
 
 interface CameraFeedProps {
@@ -31,6 +40,7 @@ const TINY_INPUT_SIZE = 320
 const MIN_FACE_SCORE = 0.45
 const MIN_FACE_AREA = 0.03
 const MAX_FACE_AREA = 0.6
+const IDEAL_FACE_AREA = 0.12
 
 const RESET_STABILIZERS_AFTER_MS = 2000
 
@@ -202,17 +212,35 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
     stabilizersRef.current.reset()
   }
 
-  const isDetectionReliable = (
+  const assessDetectionQuality = (
     detections: FaceApi.WithFaceLandmarks<any> & FaceApi.WithFaceExpressions<any>,
     vw: number,
     vh: number
-  ) => {
+  ): DetectionQuality => {
     const score = detections.detection.score ?? 1
-    if (score < MIN_FACE_SCORE) return false
     const b = detections.detection.box
     const areaRatio = (b.width * b.height) / Math.max(1, vw * vh)
-    if (areaRatio < MIN_FACE_AREA || areaRatio > MAX_FACE_AREA) return false
-    return true
+
+    const centerX = clamp((b.x + b.width / 2) / Math.max(1, vw), 0, 1)
+    const centerY = clamp((b.y + b.height / 2) / Math.max(1, vh), 0, 1)
+    const centeredness = 1 - Math.min(1, Math.hypot(centerX - 0.5, centerY - 0.5) / 0.71)
+
+    const scoreQuality = clamp(
+      (score - MIN_FACE_SCORE) / Math.max(0.001, 1 - MIN_FACE_SCORE),
+      0,
+      1
+    )
+    const areaDistance = Math.abs(areaRatio - IDEAL_FACE_AREA) / Math.max(0.001, IDEAL_FACE_AREA)
+    const areaQuality = clamp(1 - areaDistance, 0, 1)
+    const qualityScore = clamp(scoreQuality * 0.5 + areaQuality * 0.3 + centeredness * 0.2, 0, 1)
+
+    return {
+      reliable: score >= MIN_FACE_SCORE && areaRatio >= MIN_FACE_AREA && areaRatio <= MAX_FACE_AREA,
+      score: qualityScore,
+      faceScore: score,
+      areaRatio,
+      centeredness
+    }
   }
 
   /* ============================
@@ -356,7 +384,21 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
           .withFaceLandmarks()
           .withFaceExpressions()
 
-        if (detections && isDetectionReliable(detections, vw, vh)) {
+        if (detections) {
+          const quality = assessDetectionQuality(detections, vw, vh)
+          if (!quality.reliable) {
+            if (preview && canvasRef.current) {
+              const ctx = canvasRef.current.getContext("2d")
+              if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+            }
+
+            if (Date.now() - lastGoodDetectionAtRef.current > RESET_STABILIZERS_AFTER_MS) {
+              resetStabilizers()
+            }
+            setTimeout(tick, DETECTION_INTERVAL_MS)
+            return
+          }
+
           lastGoodDetectionAtRef.current = Date.now()
 
           const stabilizers = stabilizersRef.current
@@ -375,7 +417,8 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
             gazeX: gaze.x,
             gazeY: gaze.y,
             headPose,
-            blinkRate
+            blinkRate,
+            quality
           }
 
           onDetection(combinedData)

@@ -229,13 +229,20 @@ const SidePanel = () => {
 
     // NUEVO: Usar el sistema científico de cálculo cognitivo
     const cognitiveMetrics = cognitiveCalculatorRef.current.calculate(detectedData)
-    if (cognitiveMetrics.attention.phoneLooking) {
+    const attention = cognitiveMetrics.attention
+    if (attention.classification === "uncertain") {
+      setAttentionStatus({
+        label: "Ajustando",
+        color: "#fbbf24",
+        bg: "rgba(251, 191, 36, 0.12)"
+      })
+    } else if (attention.phoneLooking) {
       setAttentionStatus({
         label: "Celular",
         color: "#fbbf24",
         bg: "rgba(251, 191, 36, 0.12)"
       })
-    } else if (!cognitiveMetrics.attention.onScreen) {
+    } else if (!attention.onScreen) {
       setAttentionStatus({
         label: "Fuera",
         color: "#f87171",
@@ -256,16 +263,20 @@ const SidePanel = () => {
         true
       )
     }
-    if (cognitiveMetrics.attention.phoneLooking) {
+    if (attention.phoneLooking) {
       pushNudge(
         'phone',
         'warn',
         'Parece que miras el celular. Si puedes, regresa tu mirada a la pantalla.',
         true
       )
+    } else {
+      clearNudge('phone')
     }
-    if (!cognitiveMetrics.attention.onScreen && cognitiveMetrics.attention.offScreenMs > OFFSCREEN_NUDGE_MS) {
+    if (attention.classification !== "uncertain" && !attention.onScreen && attention.offScreenMs > OFFSCREEN_NUDGE_MS) {
       pushNudge('offscreen', 'info', 'Te alejaste de la pantalla. Vuelve para mantener el enfoque.', true)
+    } else if (attention.onScreen || attention.classification === "uncertain") {
+      clearNudge('offscreen')
     }
     
     // Aplicar smoothing a las métricas científicas
@@ -282,7 +293,9 @@ const SidePanel = () => {
     setLevels(lv)
     setCurrentConfidence(cognitiveMetrics.confidence)
 
-    if (smoothed.focus < LOW_FOCUS_THRESHOLD) {
+    if (attention.classification === "uncertain") {
+      lowFocusSinceRef.current = null
+    } else if (smoothed.focus < LOW_FOCUS_THRESHOLD) {
       if (!lowFocusSinceRef.current) lowFocusSinceRef.current = Date.now()
       const lowFor = Date.now() - (lowFocusSinceRef.current || Date.now())
       if (lowFor > LOW_FOCUS_MS) {

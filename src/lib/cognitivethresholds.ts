@@ -111,7 +111,11 @@ export const ATTENTION_RULES = {
   phonePitchDeg: 18,
   phoneGazeY: 0.75,
   sideYawDeg: 25,
-  offscreenYawDeg: 35
+  offscreenYawDeg: 35,
+  minQualityForDecision: 0.55,
+  holdToDistractedMs: 1000,
+  holdToOnScreenMs: 450,
+  holdToUncertainMs: 300
 } as const
 
 
@@ -120,11 +124,15 @@ export const ATTENTION_RULES = {
 // ============================================================================
 
 export type CognitiveState = 'deep_focus' | 'focus' | 'normal' | 'distracted' | 'stressed' | 'tired' | 'drowsy'
+export type AttentionClassification = "on_screen" | "off_screen" | "phone_like" | "side_like" | "uncertain"
 type AttentionState = {
   onScreen: boolean
   offScreenMs: number
   phoneLooking: boolean
   sideLooking: boolean
+  classification: AttentionClassification
+  qualityScore: number
+  reliable: boolean
 }
 
 
@@ -176,6 +184,8 @@ export class CognitiveMetricsCalculator {
   private offScreenSince: number | null = null
   private lastSeenAt: number = 0
   private lastOnScreenAt: number = 0
+  private stableAttention: AttentionClassification = "on_screen"
+  private attentionCandidateSince: number | null = null
 
   
   constructor(baseline: Baseline | null = null) {
@@ -275,6 +285,12 @@ export class CognitiveMetricsCalculator {
     }
   }
   
+  private getHoldMsForAttention(candidate: AttentionClassification): number {
+    if (candidate === "on_screen") return ATTENTION_RULES.holdToOnScreenMs
+    if (candidate === "uncertain") return ATTENTION_RULES.holdToUncertainMs
+    return ATTENTION_RULES.holdToDistractedMs
+  }
+
   private evaluateAttention(data: DetectionData, now: number): AttentionState {
     const screenW = window.screen.width || 1
     const screenH = window.screen.height || 1
@@ -284,35 +300,76 @@ export class CognitiveMetricsCalculator {
     const basePitch = this.baseline?.headPose.pitch ?? 0
     const yawDev = Math.abs(data.headPose.yaw - baseYaw)
     const pitchDev = Math.abs(data.headPose.pitch - basePitch)
+    const qualityScore = data.quality?.score ?? 0.75
+    const reliable = (data.quality?.reliable ?? true) && qualityScore >= ATTENTION_RULES.minQualityForDecision
 
-    const inExtended = 
+    const inExtended =
       gazeXn >= GAZE_ZONES.EXTENDED.x.min && gazeXn <= GAZE_ZONES.EXTENDED.x.max &&
       gazeYn >= 0.15 && gazeYn <= GAZE_ZONES.EXTENDED.y.max
+    const inCenter =
+      gazeXn >= GAZE_ZONES.CENTER.x.min && gazeXn <= GAZE_ZONES.CENTER.x.max &&
+      gazeYn >= GAZE_ZONES.CENTER.y.min && gazeYn <= GAZE_ZONES.CENTER.y.max
 
-    const onScreen = inExtended && yawDev < ATTENTION_RULES.offscreenYawDeg && pitchDev < 28
-    const phoneLooking = pitchDev > ATTENTION_RULES.phonePitchDeg && gazeYn > ATTENTION_RULES.phoneGazeY
-    const sideLooking = yawDev > ATTENTION_RULES.sideYawDeg || gazeXn < GAZE_ZONES.CENTER.x.min || gazeXn > GAZE_ZONES.CENTER.x.max
+    const onScreenCandidate = inExtended && yawDev < ATTENTION_RULES.offscreenYawDeg && pitchDev < 28
+    const phoneCandidate = pitchDev > ATTENTION_RULES.phonePitchDeg && gazeYn > ATTENTION_RULES.phoneGazeY
+    const sideCandidate =
+      yawDev > ATTENTION_RULES.sideYawDeg || !inCenter
 
-    if (onScreen) {
+    let candidate: AttentionClassification
+    if (!reliable) candidate = "uncertain"
+    else if (onScreenCandidate) candidate = "on_screen"
+    else if (phoneCandidate) candidate = "phone_like"
+    else if (sideCandidate) candidate = "side_like"
+    else candidate = "off_screen"
+
+    if (candidate === this.stableAttention) {
+      this.attentionCandidateSince = null
+    } else if (this.attentionCandidateSince == null) {
+      this.attentionCandidateSince = now
+    } else {
+      const holdMs = this.getHoldMsForAttention(candidate)
+      if (now - this.attentionCandidateSince >= holdMs) {
+        this.stableAttention = candidate
+        this.attentionCandidateSince = null
+      }
+    }
+
+    const stable = this.stableAttention
+    if (stable === "on_screen") {
       this.offScreenSince = null
       this.lastOnScreenAt = now
+    } else if (stable === "uncertain") {
+      // No avanzamos timer de offscreen cuando la deteccion no es confiable.
     } else if (!this.offScreenSince) {
       this.offScreenSince = now
     }
 
-    const offScreenMs = this.offScreenSince ? now - this.offScreenSince : 0
-    return { onScreen, offScreenMs, phoneLooking, sideLooking }
+    const offScreenMs =
+      stable === "on_screen" || stable === "uncertain" || !this.offScreenSince
+        ? 0
+        : now - this.offScreenSince
+
+    return {
+      onScreen: stable === "on_screen",
+      offScreenMs,
+      phoneLooking: stable === "phone_like",
+      sideLooking: stable === "side_like" || stable === "off_screen",
+      classification: stable,
+      qualityScore,
+      reliable
+    }
   }
 
   private computeAttentionPenalty(attention: AttentionState): number {
-    if (attention.onScreen) return 0
+    if (attention.onScreen || attention.classification === "uncertain" || !attention.reliable) return 0
     const effectiveMs = Math.max(0, attention.offScreenMs - ATTENTION_RULES.offscreenGraceMs)
     const range = Math.max(1, ATTENTION_RULES.offscreenMaxMs - ATTENTION_RULES.offscreenGraceMs)
     const t = Math.min(1, effectiveMs / range)
     let penalty = ATTENTION_RULES.offscreenMaxPenalty * t
     if (attention.phoneLooking) penalty += 10
     else if (attention.sideLooking) penalty += 5
-    return Math.min(45, penalty)
+    const qualityBoost = 0.75 + attention.qualityScore * 0.25
+    return Math.min(45, penalty * qualityBoost)
   }
 
   /**
@@ -351,7 +408,9 @@ export class CognitiveMetricsCalculator {
     }
     // CABEZA PERFECTA → 0 puntos de penalización
     
-    score -= headPenalty
+    const visualPenaltyFactor =
+      attention.classification === "uncertain" ? 0.25 : 0.6 + attention.qualityScore * 0.4
+    score -= Math.round(headPenalty * visualPenaltyFactor)
     
     // ============================================================
     // 2. MIRADA (Penalización: 0-30 puntos)
@@ -382,7 +441,7 @@ export class CognitiveMetricsCalculator {
     }
     // MIRANDO CENTRO → 0 puntos de penalización
     
-    score -= gazePenalty
+    score -= Math.round(gazePenalty * visualPenaltyFactor)
     
     // ============================================================
     // 3. EXPRESIONES (Penalización: 0-20 puntos)
@@ -430,7 +489,7 @@ export class CognitiveMetricsCalculator {
     // 4.5. ATENCION VISUAL (penaliza si mira fuera de pantalla)
     // ============================================================
     const attentionPenalty = this.computeAttentionPenalty(attention)
-    score -= attentionPenalty
+    score -= Math.round(attentionPenalty * visualPenaltyFactor)
 
     // ============================================================
     // 5. BONUS POR FOCO PROFUNDO
@@ -609,8 +668,13 @@ export class CognitiveMetricsCalculator {
     if (expressionSum < 0.8) {
       confidence *= 0.7
     }
+
+    if (data.quality) {
+      confidence = confidence * 0.65 + data.quality.score * 0.35
+      if (!data.quality.reliable) confidence *= 0.75
+    }
     
-    return Math.max(0.3, Math.min(1.0, confidence))
+    return Math.max(0.2, Math.min(1.0, confidence))
   }
   
   /**
@@ -625,8 +689,10 @@ export class CognitiveMetricsCalculator {
     return {
       highStress: stress >= 75,
       highFatigue: fatigue >= 80,
-      poorPosture: Math.abs(data.headPose.yaw) > 35 || Math.abs(data.headPose.pitch) > 25,
-      frequentDistraction: focus < 30,
+      poorPosture:
+        attention.reliable &&
+        (Math.abs(data.headPose.yaw) > 35 || Math.abs(data.headPose.pitch) > 25),
+      frequentDistraction: attention.classification !== "uncertain" && focus < 30,
       eyesClosed: eyesClosed  // 🆕 NUEVO
     }
   }
