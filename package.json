@@ -13,8 +13,10 @@
   "dependencies": {
     "@plasmohq/storage": "^1.15.0",
     "@supabase/supabase-js": "^2.91.0",
+    "@tensorflow-models/coco-ssd": "^2.2.3",
+    "@tensorflow/tfjs": "^4.22.0",
+    "@vladmandic/face-api": "^1.7.15",
     "date-fns": "^4.1.0",
-    "face-api.js": "^0.22.2",
     "framer-motion": "^12.26.2",
     "lucide-react": "^0.562.0",
     "plasmo": "0.90.5",

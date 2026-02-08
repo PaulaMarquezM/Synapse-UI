@@ -1,8 +1,9 @@
 // src/components/CameraFeed.tsx
 import React, { useEffect, useRef, useState } from "react"
-import type * as FaceApi from "face-api.js"
+import type * as FaceApi from "@vladmandic/face-api"
 import { installModelFetchPatch } from "~lib/installModelFetchPatch"
 import { createFaceStabilizers, normalizeExpressions, type ExpressionMap } from "~lib/vision/faceStabilizers"
+import { loadPhoneDetector, detectPhone } from "~lib/vision/phoneDetector"
 
 // Datos que se envían al Dashboard
 export interface DetectionQuality {
@@ -24,6 +25,7 @@ export interface DetectionData {
   }
   blinkRate: number
   quality?: DetectionQuality
+  phoneInFrame?: boolean
 }
 
 interface CameraFeedProps {
@@ -36,6 +38,7 @@ interface CameraFeedProps {
 }
 
 const DETECTION_INTERVAL_MS = 200
+const PHONE_DETECTION_INTERVAL_MS = 2000
 const TINY_INPUT_SIZE = 320
 const MIN_FACE_SCORE = 0.45
 const MIN_FACE_AREA = 0.03
@@ -55,7 +58,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
   const streamRef = useRef<MediaStream | null>(null)
 
   // Módulo face-api
-  const faceapiRef = useRef<typeof import("face-api.js") | null>(null)
+  const faceapiRef = useRef<typeof import("@vladmandic/face-api") | null>(null)
   const tinyOptionsRef = useRef<FaceApi.TinyFaceDetectorOptions | null>(null)
 
   const [modelsLoaded, setModelsLoaded] = useState(false)
@@ -68,6 +71,10 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
   // Control loop
   const isDetectingRef = useRef(false)
   const isMountedRef = useRef(true)
+
+  // Phone detection state (updated by separate COCO-SSD loop)
+  const phoneInFrameRef = useRef(false)
+  const phoneLoopRunningRef = useRef(false)
 
   /* ============================
      CARGA DE MODELOS
@@ -87,10 +94,10 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
         installModelFetchPatch()
         console.log("[SYNAPSE] GLOBAL fetch patch instalado ✅")
 
-        console.log("[SYNAPSE] Importando face-api.js dinámicamente...")
-        const faceapi = await import("face-api.js")
+        console.log("[SYNAPSE] Importando face-api (vladmandic)...")
+        const faceapi = await import("@vladmandic/face-api")
         faceapiRef.current = faceapi
-        console.log("[SYNAPSE] face-api.js importado ✅")
+        console.log("[SYNAPSE] face-api importado ✅")
 
         const BASE = chrome.runtime.getURL("assets/models/")
         console.log("[SYNAPSE] MODEL_BASE =", BASE)
@@ -123,6 +130,11 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
         if (!isActive) return
         console.log("✅ [SYNAPSE] MODELOS DE IA CARGADOS CORRECTAMENTE")
         setModelsLoaded(true)
+
+        // Cargar COCO-SSD en paralelo (no bloquea face detection)
+        loadPhoneDetector().then((ok) => {
+          if (ok) console.log("✅ [SYNAPSE] COCO-SSD listo para detección de celular")
+        })
       } catch (error) {
         console.error("❌ [SYNAPSE] ERROR CARGANDO MODELOS:", error)
       }
@@ -418,7 +430,8 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
             gazeY: gaze.y,
             headPose,
             blinkRate,
-            quality
+            quality,
+            phoneInFrame: phoneInFrameRef.current || undefined
           }
 
           onDetection(combinedData)
@@ -442,6 +455,24 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
     }
 
     void tick()
+
+    // Loop paralelo de COCO-SSD para detección de celular (~2s)
+    if (!phoneLoopRunningRef.current) {
+      phoneLoopRunningRef.current = true
+      const phoneTick = async () => {
+        if (!isMountedRef.current) {
+          phoneLoopRunningRef.current = false
+          return
+        }
+        const vid = videoRef.current
+        if (vid && vid.readyState >= 2) {
+          const result = await detectPhone(vid)
+          phoneInFrameRef.current = result.detected
+        }
+        setTimeout(phoneTick, PHONE_DETECTION_INTERVAL_MS)
+      }
+      void phoneTick()
+    }
   }
 
   // UI preview (si preview=true)

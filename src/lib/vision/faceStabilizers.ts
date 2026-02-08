@@ -1,4 +1,4 @@
-import type * as FaceApi from "face-api.js"
+import type * as FaceApi from "@vladmandic/face-api"
 
 export const EXPRESSION_KEYS = [
   "neutral",

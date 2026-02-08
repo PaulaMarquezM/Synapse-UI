@@ -263,7 +263,20 @@ const SidePanel = () => {
         true
       )
     }
-    if (attention.phoneLooking) {
+    // Nudge por celular detectado como objeto en cámara (COCO-SSD)
+    if (detectedData.phoneInFrame) {
+      pushNudge(
+        'phone-camera',
+        'warn',
+        'Se detecto un celular en camara. Guardalo para mantener tu enfoque.',
+        true
+      )
+    } else {
+      clearNudge('phone-camera')
+    }
+
+    // Nudge por postura de celular (pitch + gaze)
+    if (attention.phoneLooking && !detectedData.phoneInFrame) {
       pushNudge(
         'phone',
         'warn',
@@ -273,8 +286,9 @@ const SidePanel = () => {
     } else {
       clearNudge('phone')
     }
+
     if (attention.classification !== "uncertain" && !attention.onScreen && attention.offScreenMs > OFFSCREEN_NUDGE_MS) {
-      pushNudge('offscreen', 'info', 'Te alejaste de la pantalla. Vuelve para mantener el enfoque.', true)
+      pushNudge('offscreen', 'info', 'Llevas un rato sin mirar la pantalla. Vuelve para retomar el enfoque.', true)
     } else if (attention.onScreen || attention.classification === "uncertain") {
       clearNudge('offscreen')
     }

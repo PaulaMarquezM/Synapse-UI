@@ -312,11 +312,13 @@ export class CognitiveMetricsCalculator {
 
     const onScreenCandidate = inExtended && yawDev < ATTENTION_RULES.offscreenYawDeg && pitchDev < 28
     const phoneCandidate = pitchDev > ATTENTION_RULES.phonePitchDeg && gazeYn > ATTENTION_RULES.phoneGazeY
+    const phoneObjectDetected = data.phoneInFrame === true
     const sideCandidate =
       yawDev > ATTENTION_RULES.sideYawDeg || !inCenter
 
     let candidate: AttentionClassification
     if (!reliable) candidate = "uncertain"
+    else if (phoneObjectDetected) candidate = "phone_like"
     else if (onScreenCandidate) candidate = "on_screen"
     else if (phoneCandidate) candidate = "phone_like"
     else if (sideCandidate) candidate = "side_like"
