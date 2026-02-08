@@ -46,6 +46,10 @@ export function installModelFetchPatch() {
     const fixed = normalizeChromeExtensionUrl(raw)
 
     const modelReq = isModelUrl(raw) || isModelUrl(fixed)
+    if (!modelReq) {
+      return originalFetch(input, init)
+    }
+
     if (modelReq) {
       console.log("[SYNAPSE][GLOBAL_FETCH] raw  ->", raw, init)
       if (fixed !== raw) console.log("[SYNAPSE][GLOBAL_FETCH] fixed->", fixed)

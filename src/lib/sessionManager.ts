@@ -96,10 +96,7 @@ export class SessionManager {
 
     this.lastState = metrics.dominantState;
 
-    // Limitar historial a últimos 5 minutos (150 registros a 1 cada 2 seg)
-    if (this.metricsHistory.length > 150) {
-      this.metricsHistory.shift();
-    }
+    // Keep full in-memory history so session summary uses all collected samples.
   }
 
   /**

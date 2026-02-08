@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, TrendingUp, AlertCircle, Zap, Eye, Clock, Target } from 'lucide-react';
-import type { SessionSummary } from '../lib/SessionManager';
+import type { SessionSummary } from '../lib/sessionManager';
 
 interface SessionSummaryModalProps {
   isOpen: boolean;

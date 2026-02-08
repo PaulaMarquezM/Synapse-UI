@@ -9,6 +9,9 @@ import RangeFilter, { type RangeDays } from "~components/dashboard/RangeFilter"
 import FocusTrendChart from "~components/dashboard/FocusTrendChart"
 import SessionsTable, { type SessionRow } from "~components/dashboard/SessionsTable"
 import SessionDetail from "~components/dashboard/SessionDetail"
+import DataHealthPanel from "~components/dashboard/DataHealthPanel"
+
+type DashboardView = "history" | "health"
 
 const SessionsDashboard = () => {
   const { user, loading: authLoading, isAuthenticated } = useAuth()
@@ -17,6 +20,7 @@ const SessionsDashboard = () => {
   const [sessions, setSessions] = useState<SessionRow[]>([])
   const [rangeDays, setRangeDays] = useState<RangeDays>("30")
   const [selectedSession, setSelectedSession] = useState<SessionRow | null>(null)
+  const [view, setView] = useState<DashboardView>("history")
 
   const filteredSessions = useMemo(() => {
     if (rangeDays === "all") return sessions
@@ -210,10 +214,68 @@ const SessionsDashboard = () => {
         )}
 
         <RangeFilter value={rangeDays} onChange={setRangeDays} />
-        <DashboardStats totalSessions={totalSessions} avgFocus={avgFocus} />
-        <FocusTrendChart data={trendData} />
-        <SessionsTable sessions={filteredSessions} loading={loading} onSelect={setSelectedSession} />
-        {selectedSession && <SessionDetail session={selectedSession} />}
+        <div
+          style={{
+            marginBottom: 12,
+            display: "inline-flex",
+            gap: 6,
+            padding: 4,
+            borderRadius: 10,
+            background: "rgba(148, 163, 184, 0.12)",
+            border: "1px solid rgba(148, 163, 184, 0.25)"
+          }}
+        >
+          <button
+            onClick={() => setView("history")}
+            style={{
+              border: "none",
+              borderRadius: 8,
+              padding: "7px 12px",
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 600,
+              color: view === "history" ? "white" : "#cbd5e1",
+              background:
+                view === "history"
+                  ? "linear-gradient(135deg, #2563eb, #7c3aed)"
+                  : "transparent"
+            }}
+          >
+            Histórico
+          </button>
+          <button
+            onClick={() => {
+              setSelectedSession(null)
+              setView("health")
+            }}
+            style={{
+              border: "none",
+              borderRadius: 8,
+              padding: "7px 12px",
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 600,
+              color: view === "health" ? "white" : "#cbd5e1",
+              background:
+                view === "health"
+                  ? "linear-gradient(135deg, #0891b2, #0ea5e9)"
+                  : "transparent"
+            }}
+          >
+            Salud DB
+          </button>
+        </div>
+
+        {view === "history" && (
+          <>
+            <DashboardStats totalSessions={totalSessions} avgFocus={avgFocus} />
+            <FocusTrendChart data={trendData} />
+            <SessionsTable sessions={filteredSessions} loading={loading} onSelect={setSelectedSession} />
+            {selectedSession && <SessionDetail session={selectedSession} />}
+          </>
+        )}
+
+        {view === "health" && <DataHealthPanel sessions={filteredSessions} loading={loading} />}
       </div>
     </div>
   )

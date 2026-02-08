@@ -1,201 +1,222 @@
-import { Storage } from "@plasmohq/storage";
+import { Storage } from "@plasmohq/storage"
 
-const storage = new Storage();
+const storage = new Storage()
 
-// Definimos el tipo de datos que almacenaremos globalmente
 interface FocusState {
-  score: number;        // Puntuación de Enfoque (0 a 100)
-  stressLevel: number;  // Nivel de Estrés (0 a 100)
-  emotion: string;
+  score: number
+  focusScore: number
+  stressLevel: number
+  alertLevel: number
+  emotion: string
 }
 
-// ============================================
-// CONFIGURACIÓN DEL SIDE PANEL
-// ============================================
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+const asFiniteNumber = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? value : null
+const asString = (value: unknown) => (typeof value === "string" && value.trim().length > 0 ? value : null)
 
-// Abrir side panel automáticamente cuando se hace click en el ícono
+const DEFAULT_STATE: FocusState = {
+  score: 50,
+  focusScore: 50,
+  stressLevel: 20,
+  alertLevel: 80,
+  emotion: "neutral"
+}
+
+const normalizeFocusState = (value: unknown): FocusState => {
+  if (!value || typeof value !== "object") return DEFAULT_STATE
+  const maybe = value as Partial<FocusState>
+  const focusScore = asFiniteNumber(maybe.focusScore ?? maybe.score) ?? DEFAULT_STATE.focusScore
+  return {
+    score: focusScore,
+    focusScore,
+    stressLevel: asFiniteNumber(maybe.stressLevel) ?? DEFAULT_STATE.stressLevel,
+    alertLevel: asFiniteNumber(maybe.alertLevel) ?? DEFAULT_STATE.alertLevel,
+    emotion: asString(maybe.emotion) ?? DEFAULT_STATE.emotion
+  }
+}
+
 chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
-  .catch((error) => console.error('Error configurando Side Panel:', error));
+  .catch((error) => console.error("Error configurando Side Panel:", error))
 
-// Listener para cuando se instala la extensión
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('🧠 SYNAPSE UI instalado correctamente');
-  
-  // Inicializar estado por defecto
-  storage.set("focusState", {
-    score: 50,
-    stressLevel: 20,
-    emotion: "neutral"
-  });
-});
+  console.log("[SYNAPSE] Extension instalada")
+  void storage.set("focusState", DEFAULT_STATE)
+})
 
-// ============================================
-// ESCUCHAR MENSAJES DEL POPUP/SIDEPANEL
-// ============================================
-
-// Escuchamos mensajes que vienen desde el popup con los datos crudos de la IA
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request.type === "UPDATE_FOCUS_DATA" && request.data) {
-    const { expressions, gazeX, gazeY, headPose, blinkRate, emotion } = request.data;
+    const { expressions = {}, gazeX, gazeY, headPose, blinkRate, emotion } = request.data as {
+      expressions?: Record<string, number>
+      gazeX?: number
+      gazeY?: number
+      headPose?: { yaw: number; pitch: number; roll: number }
+      blinkRate?: number
+      emotion?: string
+      focusScore?: number
+      stressLevel?: number
+      alertLevel?: number
+    }
 
-    // Calcular las nuevas métricas usando las funciones refinadas
-    const newFocusScore = calculateFocusScore(gazeX, gazeY, expressions, headPose, blinkRate);
-    const newStressLevel = calculateStressLevel(expressions);
-    
-    // Usar la emoción dominante que ya viene calculada del popup
-    const dominantEmotion = emotion || Object.keys(expressions).reduce(
-      (a, b) => expressions[a] > expressions[b] ? a : b
-    );
+    const incomingFocusScore = asFiniteNumber(request.data.focusScore)
+    const incomingStressLevel = asFiniteNumber(request.data.stressLevel)
+    const incomingAlertLevel = asFiniteNumber(request.data.alertLevel)
+
+    const newFocusScore =
+      incomingFocusScore ??
+      calculateFocusScore(
+        asFiniteNumber(gazeX) ?? 0,
+        asFiniteNumber(gazeY) ?? 0,
+        expressions,
+        headPose,
+        asFiniteNumber(blinkRate) ?? undefined
+      )
+
+    const newStressLevel = incomingStressLevel ?? calculateStressLevel(expressions)
+    const newAlertLevel =
+      incomingAlertLevel ?? calculateAlertLevel(expressions, asFiniteNumber(blinkRate) ?? undefined)
+
+    const dominantEmotion = emotion || getDominantEmotion(expressions)
 
     const state: FocusState = {
       score: newFocusScore,
+      focusScore: newFocusScore,
       stressLevel: newStressLevel,
-      emotion: dominantEmotion,
-    };
+      alertLevel: newAlertLevel,
+      emotion: dominantEmotion
+    }
 
-    // Guardamos el estado globalmente para que todos los scripts lo lean
-    storage.set("focusState", state).then(() => {
-      console.log('📊 Estado actualizado:', state);
-      
-      // Enviamos el nuevo estado a TODAS las pestañas abiertas para que actualicen su UI
-      chrome.tabs.query({}, (tabs) => {
-        tabs.forEach(tab => {
-          if (tab.id) {
-            chrome.tabs.sendMessage(tab.id, { 
-              type: "STATE_UPDATED", 
-              state: state 
-            }).catch(() => {
-              // Ignorar errores de pestañas que no tienen content script
-            });
-          }
-        });
-      });
-      
-      sendResponse({ status: "State updated", state });
-    });
+    storage
+      .set("focusState", state)
+      .then(() => {
+        chrome.tabs.query({}, (tabs) => {
+          tabs.forEach((tab) => {
+            if (!tab.id) return
+            chrome.tabs
+              .sendMessage(tab.id, {
+                type: "STATE_UPDATED",
+                state
+              })
+              .catch(() => {
+                // Ignore tabs without content script
+              })
+          })
+        })
 
-    return true; // Mantener el canal abierto para respuesta asíncrona
+        sendResponse({ status: "State updated", state })
+      })
+      .catch((error) => {
+        console.error("Error guardando focusState:", error)
+        sendResponse({ status: "error", message: "No se pudo guardar focusState" })
+      })
+
+    return true
   }
 
-  // Comando para obtener el estado actual
   if (request.type === "GET_FOCUS_STATE") {
-    storage.get("focusState").then((state) => {
-      sendResponse({ state });
-    });
-    return true;
+    storage
+      .get("focusState")
+      .then((state) => {
+        sendResponse({ state: normalizeFocusState(state) })
+      })
+      .catch((error) => {
+        console.error("Error leyendo focusState:", error)
+        sendResponse({ state: DEFAULT_STATE, message: "No se pudo leer focusState" })
+      })
+
+    return true
   }
-});
 
-// ============================================
-// LÓGICA REFINADA PARA CALCULAR MÉTRICAS
-// ============================================
+  return false
+})
 
-/**
- * Función para calcular el Focus Score
- * Basado en: mirada estable, postura de cabeza, expresiones, parpadeo
- */
 function calculateFocusScore(
-  gazeX: number, 
-  gazeY: number, 
-  expressions: any,
+  gazeX: number,
+  gazeY: number,
+  expressions: Record<string, number>,
   headPose?: { yaw: number; pitch: number; roll: number },
   blinkRate?: number
 ): number {
-  // Peso emocional (neutral + happy = mejor foco)
-  const emotionalWeight = (expressions.neutral + expressions.happy) * 0.5;
+  const neutral = expressions.neutral ?? 0
+  const happy = expressions.happy ?? 0
+  const angry = expressions.angry ?? 0
+  const sad = expressions.sad ?? 0
 
-  // Estabilidad de la mirada
-  const screenWidth = typeof window !== 'undefined' ? window.screen.width : 1920;
-  const screenHeight = typeof window !== 'undefined' ? window.screen.height : 1080;
-  
-  const isGazeReasonable = 
-    gazeX > screenWidth * 0.2 && 
+  const emotionalWeight = (neutral + happy) * 0.5
+
+  const screenWidth = typeof window !== "undefined" ? window.screen.width : 1920
+  const screenHeight = typeof window !== "undefined" ? window.screen.height : 1080
+
+  const isGazeReasonable =
+    gazeX > screenWidth * 0.2 &&
     gazeX < screenWidth * 0.8 &&
-    gazeY > screenHeight * 0.1 && 
-    gazeY < screenHeight * 0.9;
+    gazeY > screenHeight * 0.1 &&
+    gazeY < screenHeight * 0.9
 
-  // Alineación de la cabeza (si está disponible)
-  let headAlignment = 1;
+  let headAlignment = 1
   if (headPose) {
-    const yawPenalty = Math.abs(headPose.yaw) / 45; // 45° = máximo
-    const pitchPenalty = Math.abs(headPose.pitch) / 30; // 30° = máximo
-    headAlignment = Math.max(0, 1 - (yawPenalty + pitchPenalty) / 2);
+    const yawPenalty = Math.abs(headPose.yaw) / 45
+    const pitchPenalty = Math.abs(headPose.pitch) / 30
+    headAlignment = Math.max(0, 1 - (yawPenalty + pitchPenalty) / 2)
   }
 
-  // Factor de parpadeo (ritmo normal = buen foco)
-  let blinkFactor = 1;
+  let blinkFactor = 1
   if (blinkRate !== undefined) {
-    // Rango ideal: 10-25 parpadeos por minuto
-    blinkFactor = (blinkRate > 10 && blinkRate < 25) ? 1 : 0.7;
+    blinkFactor = blinkRate > 10 && blinkRate < 25 ? 1 : 0.7
   }
 
-  // Cálculo del score
-  let score = 0;
+  let score = 0
 
-  if (isGazeReasonable && expressions.neutral > 0.4) {
-    // Foco alto: mirada centrada + expresión neutral
-    score = 70 + (emotionalWeight * 30);
-  } else if (expressions.angry > 0.2 || expressions.sad > 0.2) {
-    // Foco bajo: emociones negativas
-    score = 10 + (emotionalWeight * 20);
+  if (isGazeReasonable && neutral > 0.4) {
+    score = 70 + emotionalWeight * 30
+  } else if (angry > 0.2 || sad > 0.2) {
+    score = 10 + emotionalWeight * 20
   } else {
-    // Estado intermedio
-    score = 40 + (emotionalWeight * 20);
+    score = 40 + emotionalWeight * 20
   }
 
-  // Aplicar factores de cabeza y parpadeo
-  score = score * headAlignment * blinkFactor;
+  score = score * headAlignment * blinkFactor
 
-  return Math.round(Math.min(100, Math.max(0, score)));
+  return Math.round(clamp(score, 0, 100))
 }
 
-/**
- * Función para calcular el Nivel de Estrés/Carga Cognitiva
- * Basado en emociones negativas vs positivas
- */
-function calculateStressLevel(expressions: any): number {
-  // Emociones negativas aumentan estrés
-  const negativeEmotions = 
-    expressions.angry + 
-    expressions.sad + 
-    expressions.surprised;
+function calculateStressLevel(expressions: Record<string, number>): number {
+  const negativeEmotions =
+    (expressions.angry ?? 0) + (expressions.sad ?? 0) + (expressions.surprised ?? 0)
 
-  // Emociones positivas reducen estrés
-  const positiveEmotions = 
-    expressions.happy + 
-    expressions.neutral;
+  const positiveEmotions = (expressions.happy ?? 0) + (expressions.neutral ?? 0)
 
-  // Cálculo del estrés
-  const stress = negativeEmotions - (positiveEmotions * 0.5);
+  const stress = negativeEmotions - positiveEmotions * 0.5
+  const level = (stress + 1) * 50
 
-  // Escalar a rango 0-100
-  const level = (stress + 1) * 50; // Rango teórico de -1 a 1
-
-  return Math.round(Math.min(100, Math.max(0, level)));
+  return Math.round(clamp(level, 0, 100))
 }
 
-// ============================================
-// FUNCIÓN EXPORTABLE PARA LEER ESTADO
-// ============================================
+function calculateAlertLevel(expressions: Record<string, number>, blinkRate?: number): number {
+  const neutral = expressions.neutral ?? 0
+  const happy = expressions.happy ?? 0
+  const sad = expressions.sad ?? 0
+  const base = 60 + (happy - sad) * 25 + (0.5 - neutral) * 10
+  const blinkPenalty = typeof blinkRate === "number" && blinkRate > 25 ? 15 : 0
+  return Math.round(clamp(base - blinkPenalty, 0, 100))
+}
 
-/**
- * Función para leer el estado actual desde el storage
- * Útil para el popup/sidepanel al abrirse
- */
+function getDominantEmotion(expressions: Record<string, number>): string {
+  const keys = Object.keys(expressions)
+  if (keys.length === 0) return "neutral"
+  return keys.reduce((a, b) => (expressions[a] > expressions[b] ? a : b))
+}
+
 export const getFocusState = async (): Promise<FocusState> => {
-  return await storage.get("focusState");
-};
+  return normalizeFocusState(await storage.get("focusState"))
+}
 
-// ============================================
-// MANTENER SERVICE WORKER VIVO
-// ============================================
-
-// Ping cada 20 segundos para mantener el service worker activo
+// Keepalive best effort for MV3 service worker in development sessions.
 setInterval(() => {
   chrome.runtime.getPlatformInfo(() => {
-    // Solo necesitamos ejecutar algo para mantenerlo vivo
-  });
-}, 20000);
+    // no-op
+  })
+}, 20000)
 
-console.log('🧠 SYNAPSE UI Background Script iniciado');
+console.log("[SYNAPSE] Background script iniciado")

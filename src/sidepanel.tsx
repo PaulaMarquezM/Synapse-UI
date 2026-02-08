@@ -14,7 +14,7 @@ import { useAuth } from "~hooks/useAuth"
 import { signOut } from "~lib/supabase"
 import { Loader } from "lucide-react"
 import type { DetectionData } from "~components/CameraFeed"
-import type { SessionSummary } from "~lib/SessionManager"
+import type { SessionSummary } from "~lib/sessionManager"
 import "./sidepanel.css"
 
 import {
@@ -25,7 +25,7 @@ import {
 } from "~lib/metricsSmoothing"
 
 import { createCalibrator, type CalibrationState, type Baseline } from "~lib/calibration"
-import { createCognitiveCalculator } from "~lib/Cognitivethresholds"
+import { createCognitiveCalculator } from "~lib/cognitivethresholds"
 
 const CALIBRATION_DURATION_MS = 12_000
 const TARGET_SAMPLES = 20
@@ -36,6 +36,7 @@ const OFFSCREEN_NUDGE_MS = 8000
 const LOW_FOCUS_MS = 15000
 const LOW_FOCUS_THRESHOLD = 40
 const RECOVERY_FOCUS_THRESHOLD = 50
+const BACKGROUND_BROADCAST_INTERVAL_MS = 1000
 
 
 const SidePanel = () => {
@@ -57,6 +58,7 @@ const SidePanel = () => {
     stress: "Normal",
     alert: "Normal"
   })
+  const [currentConfidence, setCurrentConfidence] = useState(0.5)
 
   // Estados para el sistema de sesiones
   const [showSummaryModal, setShowSummaryModal] = useState(false)
@@ -85,6 +87,8 @@ const SidePanel = () => {
   const nudgeCooldownRef = useRef(0)
   const lowFocusSinceRef = useRef<number | null>(null)
   const lastSoundAtRef = useRef(0)
+  const lastBackgroundBroadcastAtRef = useRef(0)
+  const calibrationFinalizedRef = useRef(false)
 
 
   useEffect(() => {
@@ -136,6 +140,7 @@ const SidePanel = () => {
   }
 
   const startCalibration = () => {
+    calibrationFinalizedRef.current = false
     calibratorRef.current = createCalibrator({ durationMs: CALIBRATION_DURATION_MS })
     setCalState({
       isCalibrating: true,
@@ -150,6 +155,8 @@ const SidePanel = () => {
   }
 
   const finalizeCalibration = () => {
+    if (calibrationFinalizedRef.current || calibratorRef.current.isDone()) return
+    calibrationFinalizedRef.current = true
     calibratorRef.current.finish()
     const baseline = calibratorRef.current.buildBaseline()
     
@@ -215,14 +222,14 @@ const SidePanel = () => {
       calibratorRef.current.addSample(detectedData)
       const samples = calibratorRef.current.getSamples()
       const { timeElapsed } = calibratorRef.current.getProgress()
-      if (samples >= TARGET_SAMPLES || (timeElapsed && samples >= FALLBACK_MIN_SAMPLES)) {
+      if (!calibratorRef.current.isDone() && (samples >= TARGET_SAMPLES || (timeElapsed && samples >= FALLBACK_MIN_SAMPLES))) {
         finalizeCalibration()
       }
     }
 
     // NUEVO: Usar el sistema científico de cálculo cognitivo
     const cognitiveMetrics = cognitiveCalculatorRef.current.calculate(detectedData)
-    if (cognitiveMetrics.alerts.phoneLooking) {
+    if (cognitiveMetrics.attention.phoneLooking) {
       setAttentionStatus({
         label: "Celular",
         color: "#fbbf24",
@@ -249,7 +256,7 @@ const SidePanel = () => {
         true
       )
     }
-    if (cognitiveMetrics.alerts.phoneLooking) {
+    if (cognitiveMetrics.attention.phoneLooking) {
       pushNudge(
         'phone',
         'warn',
@@ -273,6 +280,7 @@ const SidePanel = () => {
     setStressLevel(smoothed.stress)
     setAlertLevel(smoothed.alert)
     setLevels(lv)
+    setCurrentConfidence(cognitiveMetrics.confidence)
 
     if (smoothed.focus < LOW_FOCUS_THRESHOLD) {
       if (!lowFocusSinceRef.current) lowFocusSinceRef.current = Date.now()
@@ -288,21 +296,25 @@ const SidePanel = () => {
     const exprAny = detectedData.expressions as any
     const emotion = Object.keys(exprAny).reduce((a, b) => (exprAny[a] > exprAny[b] ? a : b))
     
-    chrome.runtime.sendMessage({
-      type: "UPDATE_FOCUS_DATA",
-      data: {
-        ...detectedData,
-        emotion,
-        focusScore: smoothed.focus,
-        stressLevel: smoothed.stress,
-        alertLevel: smoothed.alert,
-        levels: lv,
-        // Agregar métricas científicas adicionales
-        cognitiveState: cognitiveMetrics.dominantState,
-        confidence: cognitiveMetrics.confidence,
-        alerts: cognitiveMetrics.alerts
-      }
-    })
+    const now = Date.now()
+    if (now - lastBackgroundBroadcastAtRef.current >= BACKGROUND_BROADCAST_INTERVAL_MS) {
+      lastBackgroundBroadcastAtRef.current = now
+      chrome.runtime.sendMessage({
+        type: "UPDATE_FOCUS_DATA",
+        data: {
+          ...detectedData,
+          emotion,
+          focusScore: smoothed.focus,
+          stressLevel: smoothed.stress,
+          alertLevel: smoothed.alert,
+          levels: lv,
+          // Agregar métricas científicas adicionales
+          cognitiveState: cognitiveMetrics.dominantState,
+          confidence: cognitiveMetrics.confidence,
+          alerts: cognitiveMetrics.alerts
+        }
+      })
+    }
   }
 
   const openDashboard = () => {
@@ -396,7 +408,7 @@ const SidePanel = () => {
               dominantState: levels.focus === "Alto" ? "focus" : 
                             levels.stress === "Alto" ? "stress" : 
                             levels.alert === "Bajo" ? "fatigue" : "neutral",
-              confidence: cognitiveCalculatorRef.current.calculate(data).confidence
+              confidence: currentConfidence
             } : null}
           />
         )}

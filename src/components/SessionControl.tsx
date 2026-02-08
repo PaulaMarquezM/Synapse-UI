@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Play, Square, Clock, TrendingUp } from 'lucide-react';
-import { sessionManager, type SessionSummary } from '../lib/SessionManager';
+import { sessionManager, type SessionMetrics, type SessionSummary } from '../lib/sessionManager';
 
 interface SessionControlProps {
   onSessionStart?: () => void;
@@ -16,6 +16,13 @@ interface SessionControlProps {
   } | null;
 }
 
+const normalizeDominantState = (value: string): SessionMetrics["dominantState"] => {
+  if (value === 'focus' || value === 'stress' || value === 'fatigue' || value === 'distraction') {
+    return value;
+  }
+  return 'neutral';
+};
+
 const SessionControl: React.FC<SessionControlProps> = ({ 
   onSessionStart, 
   onSessionEnd,
@@ -25,6 +32,26 @@ const SessionControl: React.FC<SessionControlProps> = ({
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isEnding, setIsEnding] = useState(false);
   const hasMetricsRef = useRef(false);
+  const currentMetricsRef = useRef<SessionControlProps["currentMetrics"]>(currentMetrics);
+
+  useEffect(() => {
+    currentMetricsRef.current = currentMetrics;
+  }, [currentMetrics]);
+
+  const recordCurrentMetrics = () => {
+    const metrics = currentMetricsRef.current;
+    if (!metrics) return;
+
+    sessionManager.recordMetrics({
+      focus: metrics.focus,
+      stress: metrics.stress,
+      fatigue: metrics.fatigue,
+      distraction: metrics.distraction,
+      dominantState: normalizeDominantState(metrics.dominantState),
+      confidence: metrics.confidence
+    });
+    hasMetricsRef.current = true;
+  };
 
   // Timer que se actualiza cada segundo
   useEffect(() => {
@@ -42,22 +69,14 @@ const SessionControl: React.FC<SessionControlProps> = ({
 
   // Registrar métricas cada 2 segundos cuando hay sesión activa
   useEffect(() => {
-    if (!isSessionActive || !currentMetrics) return;
+    if (!isSessionActive) return;
 
     const interval = setInterval(() => {
-      sessionManager.recordMetrics({
-        focus: currentMetrics.focus,
-        stress: currentMetrics.stress,
-        fatigue: currentMetrics.fatigue,
-        distraction: currentMetrics.distraction,
-        dominantState: currentMetrics.dominantState as any,
-        confidence: currentMetrics.confidence
-      });
-      hasMetricsRef.current = true;
+      recordCurrentMetrics();
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [isSessionActive, currentMetrics]);
+  }, [isSessionActive]);
 
   const handleStartSession = async () => {
     try {
@@ -66,17 +85,7 @@ const SessionControl: React.FC<SessionControlProps> = ({
       setElapsedSeconds(0);
       hasMetricsRef.current = false;
       console.log('✅ Sesión iniciada:', sessionId);
-      if (currentMetrics) {
-        sessionManager.recordMetrics({
-          focus: currentMetrics.focus,
-          stress: currentMetrics.stress,
-          fatigue: currentMetrics.fatigue,
-          distraction: currentMetrics.distraction,
-          dominantState: currentMetrics.dominantState as any,
-          confidence: currentMetrics.confidence
-        });
-        hasMetricsRef.current = true;
-      }
+      recordCurrentMetrics();
       onSessionStart?.();
     } catch (error) {
       console.error('❌ Error al iniciar sesión:', error);

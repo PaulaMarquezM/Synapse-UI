@@ -40,7 +40,7 @@ dist/
 keys.json
 
 # typescript
-.tsbuildinfo
+*.tsbuildinfo
 
 # IDE
 .vscode/

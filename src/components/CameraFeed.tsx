@@ -42,6 +42,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const streamRef = useRef<MediaStream | null>(null)
 
   // Módulo face-api
   const faceapiRef = useRef<typeof import("face-api.js") | null>(null)
@@ -49,6 +50,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
 
   const [modelsLoaded, setModelsLoaded] = useState(false)
   const [isInitialized, setIsInitialized] = useState(false)
+  const [cameraError, setCameraError] = useState<string | null>(null)
 
   const stabilizersRef = useRef(createFaceStabilizers())
   const lastGoodDetectionAtRef = useRef(0)
@@ -137,6 +139,11 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
   const startVideo = async () => {
     try {
       console.log("[SYNAPSE] Solicitando cámara...")
+      if (streamRef.current) {
+        for (const track of streamRef.current.getTracks()) track.stop()
+        streamRef.current = null
+      }
+      setCameraError(null)
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: 640,
@@ -144,8 +151,13 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
           facingMode: "user"
         }
       })
+      streamRef.current = stream
 
-      if (!videoRef.current) return
+      if (!videoRef.current) {
+        for (const track of stream.getTracks()) track.stop()
+        streamRef.current = null
+        return
+      }
       videoRef.current.srcObject = stream
 
       try {
@@ -156,10 +168,32 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
 
       setIsInitialized(true)
       console.log("[SYNAPSE] Cámara inicializada ✅")
-    } catch (err) {
+    } catch (err: unknown) {
       console.error("[SYNAPSE] Error al acceder a la cámara:", err)
+      const errorName = err instanceof Error ? err.name : ""
+      if (errorName === "NotAllowedError") {
+        setCameraError("Permiso de cámara bloqueado o descartado. Habilítalo y pulsa Reintentar.")
+      } else if (errorName === "NotFoundError") {
+        setCameraError("No se detectó cámara en este dispositivo.")
+      } else if (errorName === "NotReadableError") {
+        setCameraError("La cámara está en uso por otra app o pestaña.")
+      } else {
+        setCameraError("No se pudo iniciar la cámara. Intenta nuevamente.")
+      }
+      setIsInitialized(false)
     }
   }
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false
+      isDetectingRef.current = false
+      if (streamRef.current) {
+        for (const track of streamRef.current.getTracks()) track.stop()
+        streamRef.current = null
+      }
+    }
+  }, [])
 
   
   const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n))
@@ -469,6 +503,37 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
           }}
         >
           📹 Inicializando cámara...
+        </div>
+      )}
+
+      {cameraError && (
+        <div
+          style={{
+            color: "#fca5a5",
+            padding: "10px",
+            background: "rgba(239, 68, 68, 0.1)",
+            borderRadius: "8px",
+            fontSize: "12px",
+            marginTop: 10,
+            border: "1px solid rgba(239, 68, 68, 0.25)"
+          }}
+        >
+          <div style={{ marginBottom: 8 }}>{cameraError}</div>
+          <button
+            onClick={() => void startVideo()}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 8,
+              border: "1px solid rgba(239, 68, 68, 0.4)",
+              background: "rgba(239, 68, 68, 0.15)",
+              color: "#fecaca",
+              cursor: "pointer",
+              fontSize: 11,
+              fontWeight: 600
+            }}
+          >
+            Reintentar cámara
+          </button>
         </div>
       )}
     </div>

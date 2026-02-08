@@ -2,7 +2,7 @@
 
 import cssText from "data-text:./style.css";
 import type { PlasmoCSConfig } from "plasmo";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import React from "react";
 import Aura from "~components/Aura";
 
@@ -19,7 +19,7 @@ export const getStyle = () => {
 
 // Variable para controlar el estado del aura
 let currentAuraType: 'calm' | 'focus' | 'alert' | null = null;
-let auraRoot: any = null;
+let auraRoot: Root | null = null;
 let auraContainer: HTMLDivElement | null = null;
 
 // Función para mostrar/ocultar el aura
@@ -27,6 +27,7 @@ const toggleAura = (type: 'calm' | 'focus' | 'alert' | null) => {
   if (type === null) {
     // Remover el aura
     if (auraContainer) {
+      auraRoot?.unmount();
       auraContainer.remove();
       auraContainer = null;
       auraRoot = null;
