@@ -319,8 +319,8 @@ const SidePanel = () => {
     setLevels(lv)
     setCurrentConfidence(cognitiveMetrics.confidence)
 
-    // Filtro de luz cálida cuando fatiga o estrés >= 50
-    const shouldWarm = smoothed.fatigue >= 50 || smoothed.stress >= 50
+    // Filtro de luz cálida solo cuando fatiga >= 50
+    const shouldWarm = smoothed.fatigue >= 50
     if (shouldWarm !== warmFilterActiveRef.current) {
       warmFilterActiveRef.current = shouldWarm
       chrome.runtime.sendMessage({ type: "WARM_FILTER", enabled: shouldWarm }).catch(() => {})
