@@ -6,7 +6,8 @@ interface FocusState {
   score: number
   focusScore: number
   stressLevel: number
-  alertLevel: number
+  fatigueLevel: number
+  distractionLevel: number
   emotion: string
 }
 
@@ -19,7 +20,8 @@ const DEFAULT_STATE: FocusState = {
   score: 50,
   focusScore: 50,
   stressLevel: 20,
-  alertLevel: 80,
+  fatigueLevel: 20,
+  distractionLevel: 50,
   emotion: "neutral"
 }
 
@@ -31,7 +33,8 @@ const normalizeFocusState = (value: unknown): FocusState => {
     score: focusScore,
     focusScore,
     stressLevel: asFiniteNumber(maybe.stressLevel) ?? DEFAULT_STATE.stressLevel,
-    alertLevel: asFiniteNumber(maybe.alertLevel) ?? DEFAULT_STATE.alertLevel,
+    fatigueLevel: asFiniteNumber(maybe.fatigueLevel) ?? DEFAULT_STATE.fatigueLevel,
+    distractionLevel: asFiniteNumber(maybe.distractionLevel) ?? DEFAULT_STATE.distractionLevel,
     emotion: asString(maybe.emotion) ?? DEFAULT_STATE.emotion
   }
 }
@@ -56,12 +59,14 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
       emotion?: string
       focusScore?: number
       stressLevel?: number
-      alertLevel?: number
+      fatigueLevel?: number
+      distractionLevel?: number
     }
 
     const incomingFocusScore = asFiniteNumber(request.data.focusScore)
     const incomingStressLevel = asFiniteNumber(request.data.stressLevel)
-    const incomingAlertLevel = asFiniteNumber(request.data.alertLevel)
+    const incomingFatigueLevel = asFiniteNumber(request.data.fatigueLevel)
+    const incomingDistractionLevel = asFiniteNumber(request.data.distractionLevel)
 
     const newFocusScore =
       incomingFocusScore ??
@@ -74,8 +79,8 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
       )
 
     const newStressLevel = incomingStressLevel ?? calculateStressLevel(expressions)
-    const newAlertLevel =
-      incomingAlertLevel ?? calculateAlertLevel(expressions, asFiniteNumber(blinkRate) ?? undefined)
+    const newFatigueLevel = incomingFatigueLevel ?? calculateFatigueLevel(expressions, asFiniteNumber(blinkRate) ?? undefined)
+    const newDistractionLevel = incomingDistractionLevel ?? (100 - newFocusScore)
 
     const dominantEmotion = emotion || getDominantEmotion(expressions)
 
@@ -83,7 +88,8 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
       score: newFocusScore,
       focusScore: newFocusScore,
       stressLevel: newStressLevel,
-      alertLevel: newAlertLevel,
+      fatigueLevel: newFatigueLevel,
+      distractionLevel: newDistractionLevel,
       emotion: dominantEmotion
     }
 
@@ -193,13 +199,13 @@ function calculateStressLevel(expressions: Record<string, number>): number {
   return Math.round(clamp(level, 0, 100))
 }
 
-function calculateAlertLevel(expressions: Record<string, number>, blinkRate?: number): number {
+function calculateFatigueLevel(expressions: Record<string, number>, blinkRate?: number): number {
   const neutral = expressions.neutral ?? 0
-  const happy = expressions.happy ?? 0
   const sad = expressions.sad ?? 0
-  const base = 60 + (happy - sad) * 25 + (0.5 - neutral) * 10
-  const blinkPenalty = typeof blinkRate === "number" && blinkRate > 25 ? 15 : 0
-  return Math.round(clamp(base - blinkPenalty, 0, 100))
+  let fatigue = 20
+  if (typeof blinkRate === "number" && blinkRate > 25) fatigue += 30
+  fatigue += sad * 25 + Math.max(0, neutral - 0.7) * 30
+  return Math.round(clamp(fatigue, 0, 100))
 }
 
 function getDominantEmotion(expressions: Record<string, number>): string {

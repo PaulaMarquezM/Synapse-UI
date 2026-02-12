@@ -1,16 +1,17 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Brain, Eye, Zap, Activity } from 'lucide-react';
+import { Brain, Eye, Zap, Activity, EyeOff } from 'lucide-react';
 import type { DetectionData } from './CameraFeed';
 
 interface DashboardProps {
   data: DetectionData | null;
   focusScore: number;
   stressLevel: number;
-  alertLevel: number;
+  fatigueLevel: number;
+  distractionLevel: number;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ data, focusScore, stressLevel, alertLevel }) => {
+const Dashboard: React.FC<DashboardProps> = ({ data, focusScore, stressLevel, fatigueLevel, distractionLevel }) => {
   const emotion = data 
     ? Object.keys(data.expressions).reduce((a, b) => 
         data.expressions[a] > data.expressions[b] ? a : b
@@ -30,7 +31,8 @@ const Dashboard: React.FC<DashboardProps> = ({ data, focusScore, stressLevel, al
   const getSystemState = () => {
     if (stressLevel >= 60) return { text: 'Modo Calmante', color: '#4ade80' };
     if (focusScore >= 75) return { text: 'Flujo Detectado', color: '#60a5fa' };
-    if (alertLevel < 30) return { text: 'Fatiga Detectada', color: '#fbbf24' };
+    if (fatigueLevel >= 70) return { text: 'Fatiga Detectada', color: '#fbbf24' };
+    if (distractionLevel >= 65) return { text: 'Distraccion Detectada', color: '#a855f7' };
     return { text: 'Monitoreo Normal', color: '#8b5cf6' };
   };
 
@@ -155,27 +157,33 @@ const Dashboard: React.FC<DashboardProps> = ({ data, focusScore, stressLevel, al
       {/* Métricas Circulares */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(3, 1fr)',
+        gridTemplateColumns: 'repeat(2, 1fr)',
         gap: 12,
         marginBottom: 16
       }}>
-        <CircularMetric 
-          value={focusScore} 
-          label="Enfoque" 
-          color="#60a5fa" 
+        <CircularMetric
+          value={focusScore}
+          label="Enfoque"
+          color="#60a5fa"
           icon={Brain}
         />
-        <CircularMetric 
-          value={stressLevel} 
-          label="Estrés" 
-          color="#f87171" 
+        <CircularMetric
+          value={stressLevel}
+          label="Estrés"
+          color="#f87171"
           icon={Zap}
         />
-        <CircularMetric 
-          value={alertLevel} 
-          label="Alerta" 
-          color="#fbbf24" 
+        <CircularMetric
+          value={fatigueLevel}
+          label="Fatiga"
+          color="#fbbf24"
           icon={Eye}
+        />
+        <CircularMetric
+          value={distractionLevel}
+          label="Distracción"
+          color="#a855f7"
+          icon={EyeOff}
         />
       </div>
 

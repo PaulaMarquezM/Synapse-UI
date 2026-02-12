@@ -57,19 +57,22 @@
   opacity: 1 !important;
 }
 
-/* --- ESTADO FATIGUED (Alerta de cansancio) --- */
+/* --- ESTADO FATIGUED (Filtro anti-luz azul para descanso visual) --- */
 .synapse-fatigued {
-  filter: brightness(1.2) saturate(1.3);
-  transition: filter 0.8s ease-in-out;
-  animation: pulse 3s infinite ease-in-out;
+  transition: filter 1.5s ease-in-out;
 }
 
-/* Aumentar contraste para ayudar a mantenerse alerta */
-.synapse-fatigued h1,
-.synapse-fatigued h2,
-.synapse-fatigued h3,
-.synapse-fatigued p {
-  text-shadow: 0 0 10px rgba(251, 191, 36, 0.3);
+/* --- Overlay anti-luz azul (se inyecta vía JS como #synapse-bluelight-filter) --- */
+#synapse-bluelight-filter {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(255, 180, 50, 0.12);
+  pointer-events: none;
+  z-index: 2147483646;
+  transition: opacity 1.5s ease-in-out;
+  mix-blend-mode: multiply;
 }
 
 /* --- ESTADO NEUTRAL (Normal) --- */

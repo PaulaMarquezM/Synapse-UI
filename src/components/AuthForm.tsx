@@ -37,8 +37,14 @@ const AuthForm: React.FC<AuthFormProps> = ({ onAuthSuccess }) => {
     return emailRegex.test(email);
   };
 
-  const isPasswordValid = (password: string): boolean => {
-    return password.length >= 6;
+  const hasMinLength = password.length >= 10;
+  const hasLowercase = /[a-z]/.test(password);
+  const hasUppercase = /[A-Z]/.test(password);
+  const hasDigit = /\d/.test(password);
+  const hasSymbol = /[^A-Za-z0-9]/.test(password);
+
+  const isPasswordValid = (pw: string): boolean => {
+    return pw.length >= 10 && /[a-z]/.test(pw) && /[A-Z]/.test(pw) && /\d/.test(pw) && /[^A-Za-z0-9]/.test(pw);
   };
 
   const canSubmit = (): boolean => {
@@ -90,7 +96,22 @@ const AuthForm: React.FC<AuthFormProps> = ({ onAuthSuccess }) => {
 
       if (result.error) {
         setStatus('error');
-        setErrorMessage(result.error.message || 'Error al autenticar');
+        const msg = result.error.message || '';
+        if (msg.includes('Invalid login credentials')) {
+          setErrorMessage('Correo o contrasena incorrectos.');
+        } else if (msg.includes('User already registered')) {
+          setErrorMessage('Este correo ya tiene una cuenta. Intenta iniciar sesion.');
+        } else if (msg.includes('Password should be at least')) {
+          setErrorMessage('La contrasena debe tener al menos 10 caracteres.');
+        } else if (msg.includes('password') && msg.includes('weak')) {
+          setErrorMessage('Contrasena debil. Incluye mayusculas, minusculas, numeros y simbolos.');
+        } else if (msg.includes('Email not confirmed')) {
+          setErrorMessage('Revisa tu correo para confirmar tu cuenta antes de iniciar sesion.');
+        } else if (msg.includes('rate limit') || msg.includes('too many')) {
+          setErrorMessage('Demasiados intentos. Espera unos minutos e intenta de nuevo.');
+        } else {
+          setErrorMessage(msg || 'Error al autenticar. Intenta nuevamente.');
+        }
       } else {
         setStatus('success');
         setTimeout(() => {
@@ -203,10 +224,14 @@ const AuthForm: React.FC<AuthFormProps> = ({ onAuthSuccess }) => {
           SYNAPSE UI
         </h1>
         
-        <p style={{ color: '#94a3b8', fontSize: 13 }}>
-          {mode === 'login' 
-            ? 'Inicia sesión para continuar' 
+        <p style={{ color: '#94a3b8', fontSize: 13, marginBottom: 4 }}>
+          {mode === 'login'
+            ? 'Inicia sesion para continuar'
             : 'Crea tu cuenta para comenzar'}
+        </p>
+        <p style={{ color: '#64748b', fontSize: 11, lineHeight: 1.6, maxWidth: 320, margin: '0 auto' }}>
+          Extension que analiza tu rostro en tiempo real para medir enfoque, estres,
+          fatiga y distraccion mientras estudias o trabajas. Todo se procesa localmente en tu navegador.
         </p>
       </div>
 
@@ -378,18 +403,41 @@ const AuthForm: React.FC<AuthFormProps> = ({ onAuthSuccess }) => {
         </AnimatePresence>
 
         {/* Password Requirements (solo en registro) */}
-        {mode === 'register' && (
+        {mode === 'register' && password.length > 0 && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            style={{ fontSize: 11, color: '#6b7280', marginBottom: 14 }}
+            style={{
+              fontSize: 11,
+              color: '#6b7280',
+              marginBottom: 14,
+              padding: 10,
+              borderRadius: 8,
+              background: 'rgba(255,255,255,0.03)',
+              border: '1px solid rgba(255,255,255,0.06)'
+            }}
           >
-            <p style={{ color: password.length >= 6 ? '#4ade80' : '#6b7280', marginBottom: 4 }}>
-              • Mínimo 6 caracteres
+            <p style={{ color: '#94a3b8', fontWeight: 600, marginBottom: 6, fontSize: 11 }}>
+              Requisitos de contrasena:
+            </p>
+            <p style={{ color: hasMinLength ? '#4ade80' : '#6b7280', marginBottom: 3 }}>
+              {hasMinLength ? '\u2713' : '\u2022'} Minimo 10 caracteres
+            </p>
+            <p style={{ color: hasLowercase ? '#4ade80' : '#6b7280', marginBottom: 3 }}>
+              {hasLowercase ? '\u2713' : '\u2022'} Al menos una letra minuscula
+            </p>
+            <p style={{ color: hasUppercase ? '#4ade80' : '#6b7280', marginBottom: 3 }}>
+              {hasUppercase ? '\u2713' : '\u2022'} Al menos una letra mayuscula
+            </p>
+            <p style={{ color: hasDigit ? '#4ade80' : '#6b7280', marginBottom: 3 }}>
+              {hasDigit ? '\u2713' : '\u2022'} Al menos un numero
+            </p>
+            <p style={{ color: hasSymbol ? '#4ade80' : '#6b7280', marginBottom: 3 }}>
+              {hasSymbol ? '\u2713' : '\u2022'} Al menos un simbolo (!@#$%...)
             </p>
             {confirmPassword && (
-              <p style={{ color: password === confirmPassword ? '#4ade80' : '#f87171' }}>
-                • Las contraseñas {password === confirmPassword ? 'coinciden' : 'no coinciden'}
+              <p style={{ color: password === confirmPassword ? '#4ade80' : '#f87171', marginTop: 4 }}>
+                {password === confirmPassword ? '\u2713' : '\u2717'} Las contrasenas {password === confirmPassword ? 'coinciden' : 'no coinciden'}
               </p>
             )}
           </motion.div>

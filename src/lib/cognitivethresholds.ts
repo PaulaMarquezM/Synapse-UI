@@ -79,9 +79,9 @@ export const EXPRESSION_THRESHOLDS = {
  */
 export const EYE_CLOSURE_DETECTION = {
   // Neutral alto + Sad alto = ojos posiblemente cerrados
-  CLOSED_THRESHOLD: 0.3,      // neutral * sad > 0.3 = ojos cerrados
-  SEMI_CLOSED_THRESHOLD: 0.15, // neutral * sad > 0.15 = semi-cerrados
-  
+  CLOSED_THRESHOLD: 0.2,      // neutral * sad > 0.2 = ojos cerrados (más sensible)
+  SEMI_CLOSED_THRESHOLD: 0.08, // neutral * sad > 0.08 = semi-cerrados
+
   // Parpadeo muy lento también indica ojos cerrados
   SLOW_BLINK_RATE: 3          // <3 parpadeos/min = posibles ojos cerrados
 } as const
@@ -110,6 +110,8 @@ export const ATTENTION_RULES = {
   offscreenMaxPenalty: 35,
   phonePitchDeg: 18,
   phoneGazeY: 0.75,
+  lookUpPitchDeg: 15,
+  lookUpGazeY: 0.12,
   sideYawDeg: 25,
   offscreenYawDeg: 35,
   minQualityForDecision: 0.55,
@@ -158,7 +160,8 @@ export interface CognitiveMetrics {
     highFatigue: boolean
     poorPosture: boolean
     frequentDistraction: boolean
-    eyesClosed: boolean          // 🆕 NUEVO: Detección de ojos cerrados
+    eyesClosed: boolean
+    microsleep: boolean
   }
 }
 
@@ -186,6 +189,9 @@ export class CognitiveMetricsCalculator {
   private lastOnScreenAt: number = 0
   private stableAttention: AttentionClassification = "on_screen"
   private attentionCandidateSince: number | null = null
+  private lowQualitySince: number | null = null
+  private accumulatedFatigue: number = 0
+  private lastFatigueUpdateAt: number = 0
 
   
   constructor(baseline: Baseline | null = null) {
@@ -258,21 +264,45 @@ export class CognitiveMetricsCalculator {
     this.lastSeenAt = now
     const attention = this.evaluateAttention(data, now)
 
+    // Trackear tiempo con baja calidad de detección (ojos cerrados, cara parcial)
+    const isLowQuality = data.quality && !data.quality.reliable
+    if (isLowQuality) {
+      if (!this.lowQualitySince) this.lowQualitySince = now
+    } else {
+      this.lowQualitySince = null
+    }
+    const lowQualityMs = this.lowQualitySince ? now - this.lowQualitySince : 0
+
     // 1. Calcular confianza del modelo
     const confidence = this.calculateConfidence(data)
-    
+
     // 2. Calcular métricas individuales
     const focus = this.calculateFocus(data, attention)
     const stress = this.calculateStress(data)
-    const fatigue = this.calculateFatigue(data)
+    let fatigue = this.calculateFatigue(data)
+
+    // Fallback: si la detección es de baja calidad por >1s (ojos cerrados, cara parcial)
+    // face-api a veces no da buenos EAR landmarks con ojos cerrados,
+    // así que usamos lowQuality como señal secundaria de fatiga
+    if (lowQualityMs > 800) {
+      const extraFatigue = Math.min(50, Math.round((lowQualityMs - 800) / 150))
+      fatigue = Math.min(100, Math.max(fatigue, extraFatigue))
+    }
+
+    // Proxy adicional: expresión neutral alta + sad = ojos probablemente cerrados
+    const eyeClosednessProxy = (data.expressions.neutral || 0) * (data.expressions.sad || 0) * 2
+    if (eyeClosednessProxy > 0.2) {
+      fatigue = Math.min(100, fatigue + Math.round(eyeClosednessProxy * 40))
+    }
+
     const distraction = 100 - focus // Inverso del foco
-    
+
     // 3. Clasificar estado dominante
     const dominantState = this.classifyDominantState(focus, stress, fatigue)
-    
+
     // 4. Generar alertas
     const alerts = this.generateAlerts(focus, stress, fatigue, data, attention)
-    
+
     return {
       focus,
       stress,
@@ -313,14 +343,18 @@ export class CognitiveMetricsCalculator {
     const onScreenCandidate = inExtended && yawDev < ATTENTION_RULES.offscreenYawDeg && pitchDev < 28
     const phoneCandidate = pitchDev > ATTENTION_RULES.phonePitchDeg && gazeYn > ATTENTION_RULES.phoneGazeY
     const phoneObjectDetected = data.phoneInFrame === true
+    // Mirar hacia arriba: pitch negativo (cabeza inclinada arriba) + gaze en zona superior
+    const rawPitch = data.headPose.pitch - basePitch
+    const lookUpCandidate = rawPitch < -ATTENTION_RULES.lookUpPitchDeg && gazeYn < ATTENTION_RULES.lookUpGazeY
     const sideCandidate =
       yawDev > ATTENTION_RULES.sideYawDeg || !inCenter
 
     let candidate: AttentionClassification
     if (!reliable) candidate = "uncertain"
     else if (phoneObjectDetected) candidate = "phone_like"
-    else if (onScreenCandidate) candidate = "on_screen"
+    else if (onScreenCandidate && !lookUpCandidate) candidate = "on_screen"
     else if (phoneCandidate) candidate = "phone_like"
+    else if (lookUpCandidate) candidate = "off_screen"
     else if (sideCandidate) candidate = "side_like"
     else candidate = "off_screen"
 
@@ -470,7 +504,7 @@ export class CognitiveMetricsCalculator {
     // 4. PARPADEO (Penalización: 0-15 puntos)
     // ============================================================
     let blinkPenalty = 0
-    
+
     // PARPADEO EXTREMO (>30/min) → -15 puntos (SOMNOLENCIA)
     if (blinkRate >= BLINK_RATE_THRESHOLDS.DROWSY.min) {
       blinkPenalty = 15
@@ -484,14 +518,69 @@ export class CognitiveMetricsCalculator {
       blinkPenalty = 5
     }
     // PARPADEO ÓPTIMO (5-15/min) → 0 puntos de penalización
-    
+
     score -= blinkPenalty
+
+    // ============================================================
+    // 4.1. OJOS CERRADOS (Penalización: 0-40 puntos)
+    // Si los ojos están cerrados, NO hay foco posible
+    // ============================================================
+    const { eyeState } = data
+    if (eyeState.eyesClosed) {
+      const closureMs = eyeState.eyeClosureDurationMs
+      if (closureMs > 2000) {
+        // >2s cerrados → -40 (prácticamente 0 foco)
+        score -= 40
+      } else if (closureMs > 500) {
+        // 500ms-2s → -15 a -40 proporcional
+        score -= 15 + Math.round((closureMs - 500) / 1500 * 25)
+      } else {
+        // <500ms parpadeo → -5
+        score -= 5
+      }
+    }
+    // PERCLOS alto también reduce foco
+    if (eyeState.perclos > 0.15) {
+      score -= Math.round(Math.min(20, (eyeState.perclos - 0.15) / 0.25 * 20))
+    }
     
+    // ============================================================
+    // 4.2. DETECCIÓN BAJA CALIDAD = posibles ojos cerrados (fallback)
+    // face-api no siempre da buen EAR cuando los ojos están cerrados
+    // ============================================================
+    if (data.quality && !data.quality.reliable) {
+      score -= 15
+    }
+    // Proxy por expresiones: neutral alto + sad = párpados caídos
+    const eyeClosednessProxy = (expressions.neutral || 0) * (expressions.sad || 0) * 2
+    if (eyeClosednessProxy > 0.2) {
+      score -= Math.round(Math.min(25, eyeClosednessProxy * 50))
+    }
+
     // ============================================================
     // 4.5. ATENCION VISUAL (penaliza si mira fuera de pantalla)
     // ============================================================
     const attentionPenalty = this.computeAttentionPenalty(attention)
     score -= Math.round(attentionPenalty * visualPenaltyFactor)
+
+    // ============================================================
+    // 4.6. CELULAR EN PANTALLA → penalización directa fuerte
+    // ============================================================
+    if (data.phoneInFrame) {
+      score -= 35
+    }
+
+    // ============================================================
+    // 4.7. MIRAR MUY ARRIBA O MUY ABAJO → no estás en pantalla
+    // ============================================================
+    const rawPitch = headPose.pitch - (this.baseline?.headPose.pitch || 0)
+    if (rawPitch > 22 || rawPitch < -22) {
+      // Cabeza muy inclinada arriba o abajo → -30
+      score -= 30
+    } else if (rawPitch > 15 || rawPitch < -15) {
+      // Cabeza moderadamente inclinada → -15
+      score -= 15
+    }
 
     // ============================================================
     // 5. BONUS POR FOCO PROFUNDO
@@ -538,87 +627,136 @@ export class CognitiveMetricsCalculator {
   }
   
   /**
-   * FATIGA (0-100) - VERSIÓN MEJORADA
-   * Factores: parpadeo elevado (50%), ojos cerrados (25%), neutralidad alta (15%), postura degradada (10%)
-   * 
-   * NUEVA LÓGICA:
-   * - Parpadeo >30/min → FATIGA EXTREMA (+50)
-   * - Ojos muy cerrados → FATIGA ALTA (+25)
-   * - Cara "plana" (neutral >0.8) → FATIGA MODERADA (+15)
-   * - Cabeza inclinada → FATIGA LEVE (+10)
+   * FATIGA (0-100) - BASADA EN EAR/PERCLOS REAL
+   *
+   * Componentes con pesos científicos (Wierwille 1994, Caffier 2003, Dinges 1998):
+   * - PERCLOS P70 (35%): Gold standard de somnolencia (FHWA)
+   * - Cierre sostenido de ojos (25%): Microsueños y cierres prolongados
+   * - Frecuencia de parpadeo (15%): Curva U - muy alto o muy bajo = fatiga
+   * - Parpadeos lentos >400ms (10%): Indicador temprano de fatiga (Caffier 2003)
+   * - Postura degradada (10%): Cabeza inclinada = somnolencia
+   * - Expresión plana (5%): Indicador de apoyo
+   *
+   * Con acumulación temporal: fatiga sube rápido, baja lento (inercia)
    */
   private calculateFatigue(data: DetectionData): number {
-    const { blinkRate, expressions, headPose } = data
-    
-    let fatigueScore = 0
-    
+    const { blinkRate, expressions, headPose, eyeState } = data
+    const now = Date.now()
+
+    let instantScore = 0
+
     // ============================================================
-    // 1. PARPADEO ELEVADO (0-50 puntos)
+    // 1. PERCLOS - P70 (0-35 puntos) - SEÑAL DOMINANTE
+    // Porcentaje de tiempo con ojos cerrados en ventana de 60s
+    // FHWA: >15% = fatiga, >25% = somnolencia severa
     // ============================================================
-    if (blinkRate >= 40) {
-      // PARPADEO EXTREMO (>40/min) → +50 puntos (ALERTA CRÍTICA)
-      fatigueScore += 50
-    } else if (blinkRate >= BLINK_RATE_THRESHOLDS.DROWSY.min) {
-      // SOMNOLENCIA (30-40/min) → +45 puntos
-      fatigueScore += 45
-    } else if (blinkRate >= BLINK_RATE_THRESHOLDS.FATIGUE.min) {
-      // FATIGA MODERADA (20-30/min) → +35 puntos
-      fatigueScore += 35
-    } else if (blinkRate >= BLINK_RATE_THRESHOLDS.NORMAL.max) {
-      // INICIO DE FATIGA (15-20/min) → +20 puntos
-      fatigueScore += 20
-    } else if (blinkRate < BLINK_RATE_THRESHOLDS.DEEP_FOCUS.min) {
-      // PARPADEO MUY BAJO (<5/min) → +10 puntos (puede indicar fatiga extrema)
-      fatigueScore += 10
+    const perclos = eyeState.perclos
+    if (perclos < 0.08) {
+      instantScore += perclos / 0.08 * 5
+    } else if (perclos < 0.15) {
+      instantScore += 5 + (perclos - 0.08) / 0.07 * 10
+    } else if (perclos < 0.25) {
+      instantScore += 15 + (perclos - 0.15) / 0.10 * 10
+    } else {
+      instantScore += 25 + Math.min(10, (perclos - 0.25) / 0.15 * 10)
     }
-    // PARPADEO NORMAL (5-15/min) → +0 puntos
-    
+
     // ============================================================
-    // 2. OJOS CERRADOS / EXPRESIÓN DE CANSANCIO (0-25 puntos)
+    // 2. CIERRE SOSTENIDO DE OJOS (0-25 puntos)
+    // >500ms = parpadeo lento, >1.5s = microsueño, >3s = dormido
     // ============================================================
-    // Detectar si los párpados están muy bajos (proxy: neutral muy alto + sad)
-    const eyeClosedness = (expressions.neutral || 0) * (expressions.sad || 0) * 2
-    
-    if (eyeClosedness > 0.3) {
-      // OJOS MUY CERRADOS → +25 puntos
-      fatigueScore += 25
-    } else if (eyeClosedness > 0.15) {
-      // OJOS SEMI-CERRADOS → +15 puntos
-      fatigueScore += 15
-    } else if (eyeClosedness > 0.05) {
-      // OJOS LIGERAMENTE CERRADOS → +8 puntos
-      fatigueScore += 8
+    const closureMs = eyeState.eyeClosureDurationMs
+    if (closureMs > 3000) {
+      // Ojos cerrados >3s = DORMIDO → 25 puntos INMEDIATO
+      instantScore += 25
+    } else if (closureMs > 1500) {
+      // Microsueño (1.5-3s) → 18-25 puntos
+      instantScore += 18 + Math.min(7, (closureMs - 1500) / 1500 * 7)
+    } else if (closureMs > 500) {
+      // Parpadeo lento (500ms-1.5s) → 8-18 puntos
+      instantScore += 8 + (closureMs - 500) / 1000 * 10
+    } else if (eyeState.eyesClosed) {
+      // Ojos cerrándose (<500ms) → 0-8 puntos proporcional
+      instantScore += closureMs / 500 * 8
     }
-    
-    // ============================================================
-    // 3. NEUTRALIDAD ALTA (0-15 puntos)
-    // ============================================================
-    // Cara "plana" sin expresión indica cansancio
-    const neutralLevel = expressions.neutral || 0
-    
-    if (neutralLevel > EXPRESSION_THRESHOLDS.NEUTRAL_HIGH) {
-      // MUY NEUTRAL (>0.8) → +15 puntos
-      fatigueScore += 15
-    } else if (neutralLevel > EXPRESSION_THRESHOLDS.NEUTRAL_MODERATE) {
-      // MODERADAMENTE NEUTRAL (>0.5) → +8 puntos
-      fatigueScore += 8
+
+    // Bonus por microsueños recientes (últimos 5 min)
+    if (eyeState.microsleepCount > 0) {
+      instantScore += Math.min(10, eyeState.microsleepCount * 5)
     }
-    
+
     // ============================================================
-    // 4. POSTURA DEGRADADA (0-10 puntos)
+    // 3. FRECUENCIA DE PARPADEO (0-15 puntos)
+    // Curva U: normal (10-18) = 0, alto o muy bajo = fatiga
     // ============================================================
-    // Cabeza inclinada hacia abajo = cansancio
+    if (blinkRate >= 10 && blinkRate <= 18) {
+      // Normal → 0
+    } else if (blinkRate > 18 && blinkRate <= 25) {
+      instantScore += (blinkRate - 18) / 7 * 5
+    } else if (blinkRate > 25) {
+      instantScore += 5 + Math.min(10, (blinkRate - 25) / 15 * 10)
+    } else if (blinkRate >= 5) {
+      instantScore += (10 - blinkRate) / 5 * 5
+    } else {
+      // <5 bpm con ojos abiertos = fatiga profunda o microsueño
+      instantScore += 5 + Math.min(7, (5 - blinkRate) / 5 * 7)
+    }
+
+    // ============================================================
+    // 4. PARPADEOS LENTOS >400ms (0-10 puntos)
+    // Caffier 2003: duración media del parpadeo es el indicador más sensible
+    // ============================================================
+    const slowBlinks = eyeState.slowBlinkCount
+    if (slowBlinks >= 5) {
+      instantScore += 10
+    } else if (slowBlinks >= 3) {
+      instantScore += 7
+    } else if (slowBlinks >= 1) {
+      instantScore += 3
+    }
+
+    // ============================================================
+    // 5. POSTURA DEGRADADA (0-10 puntos)
+    // ============================================================
     const pitchDev = Math.abs(headPose.pitch - (this.baseline?.headPose.pitch || 0))
-    
     if (pitchDev > 25) {
-      // CABEZA MUY INCLINADA (>25°) → +10 puntos
-      fatigueScore += 10
+      instantScore += 10
     } else if (pitchDev > 15) {
-      // CABEZA INCLINADA (>15°) → +5 puntos
-      fatigueScore += 5
+      instantScore += 5
     }
-    
-    return Math.round(Math.max(0, Math.min(100, fatigueScore)))
+
+    // ============================================================
+    // 6. EXPRESIÓN PLANA (0-5 puntos)
+    // ============================================================
+    const neutralLevel = expressions.neutral || 0
+    if (neutralLevel > 0.85) {
+      instantScore += 5
+    } else if (neutralLevel > 0.7) {
+      instantScore += (neutralLevel - 0.7) / 0.15 * 5
+    }
+
+    instantScore = Math.max(0, Math.min(100, instantScore))
+
+    // ============================================================
+    // ACUMULACIÓN TEMPORAL: fatiga sube rápido, baja lento
+    // ============================================================
+    const dt = this.lastFatigueUpdateAt > 0 ? (now - this.lastFatigueUpdateAt) / 1000 : 0.2
+    this.lastFatigueUpdateAt = now
+
+    if (instantScore > this.accumulatedFatigue) {
+      // Subir rápido: 60% del gap por segundo
+      const riseRate = 0.6
+      this.accumulatedFatigue += (instantScore - this.accumulatedFatigue) * riseRate * Math.min(dt, 1)
+    } else {
+      // Bajar lento: 5% del gap por segundo (la fatiga no se va rápido)
+      const decayRate = 0.05
+      this.accumulatedFatigue += (instantScore - this.accumulatedFatigue) * decayRate * Math.min(dt, 1)
+    }
+
+    this.accumulatedFatigue = Math.max(0, Math.min(100, this.accumulatedFatigue))
+
+    // Retornar el mayor entre instantáneo y acumulado (nunca bajar debajo del instant)
+    return Math.round(Math.max(instantScore, this.accumulatedFatigue))
   }
   
   /**
@@ -683,19 +821,15 @@ export class CognitiveMetricsCalculator {
    * GENERACIÓN DE ALERTAS
    */
   private generateAlerts(focus: number, stress: number, fatigue: number, data: DetectionData, attention: AttentionState) {
-    // Detectar ojos cerrados
-    const eyeClosedness = (data.expressions.neutral || 0) * (data.expressions.sad || 0) * 2
-    const eyesClosed = eyeClosedness > EYE_CLOSURE_DETECTION.CLOSED_THRESHOLD || 
-                       data.blinkRate < EYE_CLOSURE_DETECTION.SLOW_BLINK_RATE
-    
     return {
       highStress: stress >= 75,
-      highFatigue: fatigue >= 80,
+      highFatigue: fatigue >= 70,
       poorPosture:
         attention.reliable &&
         (Math.abs(data.headPose.yaw) > 35 || Math.abs(data.headPose.pitch) > 25),
       frequentDistraction: attention.classification !== "uncertain" && focus < 30,
-      eyesClosed: eyesClosed  // 🆕 NUEVO
+      eyesClosed: data.eyeState.eyesClosed && data.eyeState.eyeClosureDurationMs > 500,
+      microsleep: data.eyeState.eyeClosureDurationMs > 1500
     }
   }
   

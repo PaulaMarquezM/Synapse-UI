@@ -14,7 +14,7 @@ import { useAuth } from "~hooks/useAuth"
 import { signOut } from "~lib/supabase"
 import { Loader } from "lucide-react"
 import type { DetectionData } from "~components/CameraFeed"
-import type { SessionSummary } from "~lib/sessionManager"
+import { sessionManager, type SessionSummary } from "~lib/sessionManager"
 import "./sidepanel.css"
 
 import {
@@ -37,6 +37,8 @@ const LOW_FOCUS_MS = 15000
 const LOW_FOCUS_THRESHOLD = 40
 const RECOVERY_FOCUS_THRESHOLD = 50
 const BACKGROUND_BROADCAST_INTERVAL_MS = 1000
+const SESSION_BREAK_NUDGE_MS = 40 * 60 * 1000 // 40 minutos
+const FATIGUE_FILTER_THRESHOLD = 70
 
 
 const SidePanel = () => {
@@ -45,7 +47,8 @@ const SidePanel = () => {
   const [data, setData] = useState<DetectionData | null>(null)
   const [focusScore, setFocusScore] = useState(50)
   const [stressLevel, setStressLevel] = useState(20)
-  const [alertLevel, setAlertLevel] = useState(80)
+  const [fatigueLevel, setFatigueLevel] = useState(20)
+  const [distractionLevel, setDistractionLevel] = useState(50)
   const [nudge, setNudge] = useState<{ id: string; type: 'info' | 'warn' | 'danger'; text: string } | null>(null)
   const [soundEnabled, setSoundEnabled] = useState(false)
   const [attentionStatus, setAttentionStatus] = useState<{ label: string; color: string; bg: string }>({
@@ -56,7 +59,8 @@ const SidePanel = () => {
   const [levels, setLevels] = useState<MetricsLevels>({
     focus: "Normal",
     stress: "Normal",
-    alert: "Normal"
+    fatigue: "Normal",
+    distraction: "Normal"
   })
   const [currentConfidence, setCurrentConfidence] = useState(0.5)
 
@@ -78,8 +82,8 @@ const SidePanel = () => {
   const calibratorRef = useRef(createCalibrator({ durationMs: CALIBRATION_DURATION_MS }))
   const smootherRef = useRef(
     createMetricsSmoother(
-      { focus: 50, stress: 20, alert: 80 },
-      { ...defaultSmoothingConfig, alpha: 0.12, maxDeltaPerTick: 5 }
+      { focus: 50, stress: 20, fatigue: 20, distraction: 50 },
+      { ...defaultSmoothingConfig, alpha: 0.18, maxDeltaPerTick: 8 }
     )
   )
   const cognitiveCalculatorRef = useRef(createCognitiveCalculator(null))
@@ -88,7 +92,9 @@ const SidePanel = () => {
   const lowFocusSinceRef = useRef<number | null>(null)
   const lastSoundAtRef = useRef(0)
   const lastBackgroundBroadcastAtRef = useRef(0)
+  const breakNudgeSentRef = useRef(false)
   const calibrationFinalizedRef = useRef(false)
+  const warmFilterActiveRef = useRef(false)
 
 
   useEffect(() => {
@@ -188,6 +194,10 @@ const SidePanel = () => {
           color: "#fbbf24",
           bg: "rgba(251, 191, 36, 0.12)"
         })
+        // Subir fatiga gradualmente sin cara (posible somnolencia)
+        setFatigueLevel(prev => Math.min(100, prev + 2))
+        setDistractionLevel(prev => Math.min(100, prev + 1))
+        setFocusScore(prev => Math.max(0, prev - 1))
       } else {
         clearNudge('no-face')
       }
@@ -293,19 +303,28 @@ const SidePanel = () => {
       clearNudge('offscreen')
     }
     
-    // Aplicar smoothing a las métricas científicas
+    // Aplicar smoothing a las 4 métricas
     const raw: Metrics = {
       focus: cognitiveMetrics.focus,
       stress: cognitiveMetrics.stress,
-      alert: 100 - cognitiveMetrics.fatigue // Invertir fatigue para "alertness"
+      fatigue: cognitiveMetrics.fatigue,
+      distraction: cognitiveMetrics.distraction
     }
-    
+
     const { smoothed, levels: lv } = smootherRef.current.update(raw)
     setFocusScore(smoothed.focus)
     setStressLevel(smoothed.stress)
-    setAlertLevel(smoothed.alert)
+    setFatigueLevel(smoothed.fatigue)
+    setDistractionLevel(smoothed.distraction)
     setLevels(lv)
     setCurrentConfidence(cognitiveMetrics.confidence)
+
+    // Filtro de luz cálida cuando fatiga o estrés >= 50
+    const shouldWarm = smoothed.fatigue >= 50 || smoothed.stress >= 50
+    if (shouldWarm !== warmFilterActiveRef.current) {
+      warmFilterActiveRef.current = shouldWarm
+      chrome.runtime.sendMessage({ type: "WARM_FILTER", enabled: shouldWarm }).catch(() => {})
+    }
 
     if (attention.classification === "uncertain") {
       lowFocusSinceRef.current = null
@@ -319,6 +338,39 @@ const SidePanel = () => {
       lowFocusSinceRef.current = null
     }
 
+    // Nudge de descanso a los 40 minutos de sesión activa
+    const sessionStatus = sessionManager.getSessionStatus()
+    if (sessionStatus && sessionStatus.elapsedSeconds >= SESSION_BREAK_NUDGE_MS / 1000 && !breakNudgeSentRef.current) {
+      breakNudgeSentRef.current = true
+      pushNudge(
+        'session-break',
+        'warn',
+        'Llevas mas de 40 minutos en sesion. Te sugerimos tomar un descanso de 5-10 minutos para cuidar tu bienestar.',
+        true
+      )
+    }
+
+    // Nudge por microsueño detectado (ojos cerrados >1.5s)
+    if (cognitiveMetrics.alerts.microsleep) {
+      pushNudge(
+        'microsleep',
+        'danger',
+        'Microsueño detectado. Tus ojos llevan cerrados mucho tiempo. Por favor toma un descanso ahora.',
+        true
+      )
+    }
+
+    // Nudge cuando fatiga alcanza el umbral del filtro
+    if (smoothed.fatigue >= FATIGUE_FILTER_THRESHOLD) {
+      pushNudge(
+        'high-fatigue',
+        'warn',
+        'Fatiga alta detectada. Te recomendamos tomar un descanso de 5-10 minutos para cuidar tu bienestar.',
+        true
+      )
+    } else {
+      clearNudge('high-fatigue')
+    }
 
     const exprAny = detectedData.expressions as any
     const emotion = Object.keys(exprAny).reduce((a, b) => (exprAny[a] > exprAny[b] ? a : b))
@@ -333,7 +385,8 @@ const SidePanel = () => {
           emotion,
           focusScore: smoothed.focus,
           stressLevel: smoothed.stress,
-          alertLevel: smoothed.alert,
+          fatigueLevel: smoothed.fatigue,
+          distractionLevel: smoothed.distraction,
           levels: lv,
           // Agregar métricas científicas adicionales
           cognitiveState: cognitiveMetrics.dominantState,
@@ -366,6 +419,9 @@ const SidePanel = () => {
   }
 
   const handleSessionEnd = (summary: SessionSummary) => {
+    breakNudgeSentRef.current = false
+    clearNudge('session-break')
+    clearNudge('high-fatigue')
     setLastSessionSummary(summary)
     setShowSummaryModal(true)
   }
@@ -430,11 +486,12 @@ const SidePanel = () => {
             currentMetrics={data ? {
               focus: focusScore,
               stress: stressLevel,
-              fatigue: 100 - alertLevel, // Usar fatigue real
-              distraction: 100 - focusScore,
-              dominantState: levels.focus === "Alto" ? "focus" : 
-                            levels.stress === "Alto" ? "stress" : 
-                            levels.alert === "Bajo" ? "fatigue" : "neutral",
+              fatigue: fatigueLevel,
+              distraction: distractionLevel,
+              dominantState: levels.focus === "Alto" ? "focus" :
+                            levels.stress === "Alto" ? "stress" :
+                            levels.fatigue === "Alto" ? "fatigue" :
+                            levels.distraction === "Alto" ? "distraction" : "neutral",
               confidence: currentConfidence
             } : null}
           />
@@ -457,7 +514,8 @@ const SidePanel = () => {
           data={data}
           focusScore={focusScore}
           stressLevel={stressLevel}
-          alertLevel={alertLevel}
+          fatigueLevel={fatigueLevel}
+          distractionLevel={distractionLevel}
         />
       </div>
 

@@ -268,6 +268,43 @@ const SessionsDashboard = () => {
 
         {view === "history" && (
           <>
+            {/* Descripcion del dashboard */}
+            <div
+              style={{
+                marginBottom: 16,
+                padding: 14,
+                borderRadius: 12,
+                background: "linear-gradient(135deg, rgba(96,165,250,0.08), rgba(139,92,246,0.08))",
+                border: "1px solid rgba(96,165,250,0.15)"
+              }}
+            >
+              <p style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", marginBottom: 8 }}>
+                Historial de sesiones de estudio
+              </p>
+              <p style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.6, marginBottom: 8 }}>
+                Aqui puedes ver el resumen de todas tus sesiones de trabajo o estudio.
+                SYNAPSE UI analiza tu rostro con IA para medir tu estado cognitivo en tiempo real.
+              </p>
+              <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.7 }}>
+                <p style={{ marginBottom: 4 }}>
+                  <span style={{ color: "#60a5fa", fontWeight: 600 }}>Enfoque</span> — Mide que tan concentrado
+                  estas en la pantalla. Se basa en la posicion de tu cabeza, direccion de tu mirada y parpadeo.
+                </p>
+                <p style={{ marginBottom: 4 }}>
+                  <span style={{ color: "#f87171", fontWeight: 600 }}>Estres</span> — Detecta senales de tension
+                  mediante expresiones faciales negativas y parpadeo rapido.
+                </p>
+                <p style={{ marginBottom: 4 }}>
+                  <span style={{ color: "#fbbf24", fontWeight: 600 }}>Fatiga</span> — Indica cansancio ocular
+                  usando el porcentaje de cierre de ojos (PERCLOS), parpadeos lentos y microsueños.
+                </p>
+                <p>
+                  <span style={{ color: "#a855f7", fontWeight: 600 }}>Distraccion</span> — Inverso del enfoque.
+                  Sube cuando miras fuera de pantalla, el celular, o te mueves mucho.
+                </p>
+              </div>
+            </div>
+
             <DashboardStats totalSessions={totalSessions} avgFocus={avgFocus} />
             <FocusTrendChart data={trendData} />
             <SessionsTable sessions={filteredSessions} loading={loading} onSelect={setSelectedSession} />

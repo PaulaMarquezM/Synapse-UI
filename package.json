@@ -40,7 +40,8 @@
   "manifest": {
     "permissions": [
       "camera",
-      "storage"
+      "storage",
+      "tabs"
     ],
     "host_permissions": [
       "https://*/*"

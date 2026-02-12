@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from "react"
 import type * as FaceApi from "@vladmandic/face-api"
 import { installModelFetchPatch } from "~lib/installModelFetchPatch"
-import { createFaceStabilizers, normalizeExpressions, type ExpressionMap } from "~lib/vision/faceStabilizers"
+import { createFaceStabilizers, normalizeExpressions, type ExpressionMap, type EyeState } from "~lib/vision/faceStabilizers"
 import { loadPhoneDetector, detectPhone } from "~lib/vision/phoneDetector"
 
 // Datos que se envían al Dashboard
@@ -24,6 +24,7 @@ export interface DetectionData {
     roll: number
   }
   blinkRate: number
+  eyeState: EyeState
   quality?: DetectionQuality
   phoneInFrame?: boolean
 }
@@ -398,31 +399,30 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
 
         if (detections) {
           const quality = assessDetectionQuality(detections, vw, vh)
-          if (!quality.reliable) {
-            if (preview && canvasRef.current) {
-              const ctx = canvasRef.current.getContext("2d")
-              if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
-            }
-
-            if (Date.now() - lastGoodDetectionAtRef.current > RESET_STABILIZERS_AFTER_MS) {
-              resetStabilizers()
-            }
-            setTimeout(tick, DETECTION_INTERVAL_MS)
-            return
-          }
-
-          lastGoodDetectionAtRef.current = Date.now()
 
           const stabilizers = stabilizersRef.current
           const expressions = stabilizers.smoothExpressions(detections.expressions)
           const headPose = stabilizers.smoothPose(calculateHeadPose(detections.landmarks))
           const gaze = stabilizers.smoothGaze(estimateGaze(detections))
 
-          // overlay visual (si preview)
-          if (preview) drawOverlay(detections, expressions)
-
           stabilizers.updateBlinkState(detections.landmarks)
           const blinkRate = stabilizers.getBlinkRate()
+          const eyeState = stabilizers.getEyeState()
+
+          if (quality.reliable) {
+            lastGoodDetectionAtRef.current = Date.now()
+            if (preview) drawOverlay(detections, expressions)
+          } else {
+            // Cara visible pero baja calidad (ojos cerrados, cara parcial)
+            // Limpiar overlay pero SEGUIR enviando datos para que fatiga suba
+            if (preview && canvasRef.current) {
+              const ctx = canvasRef.current.getContext("2d")
+              if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+            }
+            if (Date.now() - lastGoodDetectionAtRef.current > RESET_STABILIZERS_AFTER_MS) {
+              resetStabilizers()
+            }
+          }
 
           const combinedData: DetectionData = {
             expressions,
@@ -430,6 +430,7 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
             gazeY: gaze.y,
             headPose,
             blinkRate,
+            eyeState,
             quality,
             phoneInFrame: phoneInFrameRef.current || undefined
           }
@@ -498,7 +499,8 @@ const CameraFeed: React.FC<CameraFeedProps> = ({
     inset: 0,
     width: "100%",
     height: "100%",
-    pointerEvents: "none"
+    pointerEvents: "none",
+    transform: "scaleX(-1)" // espejo para coincidir con el video
   }
 
   // Modo oculto (cuando preview=false): mantenemos video/canvas fuera de pantalla
